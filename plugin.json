@@ -1,0 +1,12 @@
+{
+  "name": "context-monitor",
+  "displayName": "Context Monitor",
+  "description": "Live monitor in the auxiliary pane showing 256K compaction headroom, prompt cache hits, TTFT/TPS speed, and per-prompt cold/warm starts.",
+  "version": "0.1.0",
+  "logo": "assets/logo.svg",
+  "suggestedPrompts": [
+    "Open the Context Monitor side pane to inspect token usage",
+    "Check how much context window and cache this conversation uses",
+    "Which recent steps increased my context usage the most?"
+  ]
+}

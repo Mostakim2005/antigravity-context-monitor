@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Context Monitor</title>
+  <script src="/preload.js"></script>
+  <link rel="stylesheet" href="/styles.css?v=3">
+</head>
+<body>
+  <div class="shell">
+    <header class="header">
+      <div class="header-top">
+        <div class="title-wrap">
+          <h1 class="title">上下文监控</h1>
+          <span id="live-pill" class="live-pill" title="每 1.2 秒自动轮询本地 transcript.jsonl">
+            <span class="live-dot" aria-hidden="true"></span>
+            <span id="live-text">Live</span>
+          </span>
+        </div>
+        <span id="conv-badge" class="conv-badge" title="当前会话 ID">—</span>
+      </div>
+
+      <div id="repo-line" class="repo-line hidden"></div>
+
+      <div class="limit-bar" aria-label="自动压缩窗口上限">
+        <span class="limit-label">自动压缩阈值</span>
+        <span class="preset-btn active" title="Antigravity 2.0 自动压缩阈值约 256K (262,144 tokens)">256K · 262,144</span>
+      </div>
+    </header>
+
+    <main id="content" class="content">
+      <section id="empty-state" class="card empty-state">
+        <div class="empty-title">等待当前会话记录…</div>
+        <p id="empty-desc" class="empty-desc">
+          当前会话还没有模型调用记录，发送第一条消息后这里会自动显示上下文占用与 Cache 命中情况。
+        </p>
+      </section>
+
+      <div id="dashboard" class="dashboard hidden">
+        <section class="card gauge-card">
+          <div class="gauge-head">
+            <div>
+              <div class="eyebrow">当前上下文占用</div>
+              <div class="hero-row">
+                <span id="hero-used" class="hero-num">0</span>
+                <span id="hero-pct" class="pct-badge">0.0%</span>
+              </div>
+            </div>
+            <div class="remain-col">
+              <div class="eyebrow">上下文余量</div>
+              <div id="hero-remain" class="remain-num">—</div>
+            </div>
+          </div>
+
+          <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div id="bar-cache" class="bar-seg bar-cache" style="width: 0%"></div>
+            <div id="bar-fresh" class="bar-seg bar-fresh" style="width: 0%"></div>
+          </div>
+
+          <div class="legend-row">
+            <span class="legend-item"><i class="dot dot-cache"></i>Cache <strong id="leg-cache">0</strong></span>
+            <span class="legend-item"><i class="dot dot-fresh"></i>新增 <strong id="leg-fresh">0</strong></span>
+            <span class="legend-item"><i class="dot dot-remain"></i>余量 <strong id="leg-remain">0</strong></span>
+          </div>
+
+          <div id="gauge-note" class="gauge-note"></div>
+        </section>
+
+        <section class="metrics-grid">
+          <div class="card metric-card">
+            <div class="metric-label">Cache 命中</div>
+            <div id="m-cache" class="metric-val">0</div>
+            <div id="m-cache-rate" class="metric-sub">命中率 0%</div>
+          </div>
+          <div class="card metric-card">
+            <div class="metric-label">本步新增输入</div>
+            <div id="m-fresh" class="metric-val">0</div>
+            <div class="metric-sub">未命中 Cache</div>
+          </div>
+          <div class="card metric-card">
+            <div class="metric-label">本步输出</div>
+            <div id="m-output" class="metric-val">0</div>
+            <div id="m-step" class="metric-sub">Step —</div>
+          </div>
+        </section>
+
+        <section class="metrics-grid">
+          <div class="card metric-card">
+            <div class="metric-label">首字延迟 TTFT</div>
+            <div id="m-ttft" class="metric-val">—</div>
+            <div id="m-ttft-sub" class="metric-sub">均值 —</div>
+          </div>
+          <div class="card metric-card">
+            <div class="metric-label">解码速度 TPS</div>
+            <div id="m-tps" class="metric-val">—</div>
+            <div id="m-tps-sub" class="metric-sub">含首字 —</div>
+          </div>
+          <div class="card metric-card">
+            <div class="metric-label">本步耗时</div>
+            <div id="m-dur" class="metric-val">—</div>
+            <div id="m-dur-sub" class="metric-sub">流式 —</div>
+          </div>
+        </section>
+
+        <section class="card totals-card">
+          <div class="section-head">
+            <span class="section-title">本会话累计</span>
+            <span id="tot-calls" class="section-meta">0 次调用</span>
+          </div>
+          <div class="totals-grid">
+            <div class="total-item">
+              <span class="total-k">累计 Cache 读取</span>
+              <span id="tot-cache" class="total-v">0</span>
+            </div>
+            <div class="total-item">
+              <span class="total-k">累计新增输入</span>
+              <span id="tot-fresh" class="total-v">0</span>
+            </div>
+            <div class="total-item">
+              <span class="total-k">累计输出</span>
+              <span id="tot-output" class="total-v">0</span>
+            </div>
+            <div class="total-item">
+              <span class="total-k">平均 Cache 命中</span>
+              <span id="tot-rate" class="total-v">0%</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="card chart-card">
+          <div class="section-head">
+            <span class="section-title">上下文增长趋势</span>
+            <span id="chart-range" class="section-meta">最近调用</span>
+          </div>
+          <div id="spark-wrap" class="spark-wrap"></div>
+        </section>
+
+        <section class="card history-card">
+          <div class="section-head">
+            <span class="section-title">Prompt 轮次 · 冷/热启动</span>
+            <span id="turns-count" class="section-meta">按最新倒序</span>
+          </div>
+          <div id="turns-list" class="steps-list"></div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script src="/app.js?v=3"></script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+{
+  "name": "context_monitor",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Live context window and token usage sidecar for Antigravity 2.0",
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}

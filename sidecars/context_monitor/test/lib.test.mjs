@@ -152,6 +152,7 @@ test('parseDurationSec and enrichSummaryWithSpeed compute TTFT and weighted TPS'
     {
       stepIndices: [1],
       chatModel: {
+        responseModel: 'gemini-test-model',
         timeToFirstToken: '2.00s',
         streamingDuration: '1.00s',
         usage: { outputTokens: '500' },
@@ -173,8 +174,10 @@ test('parseDurationSec and enrichSummaryWithSpeed compute TTFT and weighted TPS'
   assert.equal(enriched.latest.speed.tps, 150);
   assert.equal(enriched.recentTurns[0].speed.ttftSec, 2);
   assert.equal(enriched.recentTurns[0].speed.streamingTps, 400); // (500+300)/(1+1)
+  assert.equal(enriched.recentTurns[0].speed.model, 'gemini-test-model');
   assert.equal(enriched.speedStats.avgTtftSec, 1.5);
   assert.equal(enriched.speedStats.avgStreamingTps, 400);
+  assert.deepEqual(enriched.speedStats.models, ['gemini-test-model']);
 });
 
 test('parseTranscriptDaily and buildHeatmapData aggregate 16-week total tokens', () => {

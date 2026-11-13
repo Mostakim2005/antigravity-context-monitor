@@ -369,6 +369,7 @@ export function enrichSummaryWithSpeed(summary, speedIndex) {
         streamingTps: sumStreamSec > 0 ? Number((sumStreamOut / sumStreamSec).toFixed(1)) : null,
         tps: sumTotalSec > 0 ? Number((sumTotalOut / sumTotalSec).toFixed(1)) : null,
         durationSec: sumTotalSec > 0 ? Number(sumTotalSec.toFixed(2)) : null,
+        model: firstEntry.model || '',
       },
     };
   });
@@ -379,7 +380,9 @@ export function enrichSummaryWithSpeed(summary, speedIndex) {
   let ttftCount = 0;
   let streamOutSum = 0;
   let streamSecSum = 0;
+  const modelsSet = new Set();
   for (const e of uniqueAll) {
+    if (e.model) modelsSet.add(e.model);
     if (e.ttftSec !== null) {
       ttftSum += e.ttftSec;
       ttftCount += 1;
@@ -398,6 +401,7 @@ export function enrichSummaryWithSpeed(summary, speedIndex) {
       avgTtftSec: ttftCount > 0 ? Number((ttftSum / ttftCount).toFixed(2)) : null,
       avgStreamingTps: streamSecSum > 0 ? Number((streamOutSum / streamSecSum).toFixed(1)) : null,
       sampleCount: uniqueAll.size,
+      models: [...modelsSet],
     },
   };
 }
@@ -472,7 +476,7 @@ export function parseTranscriptDaily(text) {
 
     let bucket = byDay.get(dateKey);
     if (!bucket) {
-      bucket = { inputTokens: 0, cacheReadTokens: 0, outputTokens: 0, totalTokens: 0, calls: 0 };
+      bucket = { inputTokens: 0, cacheReadTokens: 0, outputTokens: 0, totalTokens: 0, calls: 0, stepTokens: [] };
       byDay.set(dateKey, bucket);
     }
     bucket.inputTokens += inputTokens;
@@ -480,6 +484,9 @@ export function parseTranscriptDaily(text) {
     bucket.outputTokens += outputTokens;
     bucket.totalTokens += totalTokens;
     bucket.calls += 1;
+    if (obj.step_index != null) {
+      bucket.stepTokens.push({ stepIndex: Number(obj.step_index), totalTokens });
+    }
   }
   return byDay;
 }
@@ -574,6 +581,7 @@ export function buildHeatmapData(entries, { weeks = 16, now = new Date() } = {})
       outputTokens: cell.outputTokens,
       calls: cell.calls,
       sessions: cell.sessions.size,
+      sessionIds: [...cell.sessions],
       level,
     };
   });

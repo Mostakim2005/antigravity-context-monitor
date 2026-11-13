@@ -6,10 +6,10 @@ A zero-dependency Antigravity 2.0 Sidecar UI plugin (`SIDECAR_UI_ENTRYPOINT_AUX_
 
 - **256K Auto-Compaction Gauge**: Tracks `input_tokens + cache_read_tokens` from the latest model call against Antigravity 2.0's `262,144` (256K) auto-compaction threshold, showing remaining room before compaction.
 - **Prompt Cache Breakdown**: Visualizes cached reads (`cache_read_tokens`), fresh uncached input (`input_tokens`), output tokens (`output_tokens`), and cache hit rate.
-- **TTFT & Output Speed (TPS)**: Queries the local Antigravity `LanguageServerService` (`GetCascadeTrajectoryGeneratorMetadata`) for real `timeToFirstToken` (TTFT), streaming decode TPS, end-to-end TPS, and session averages. Gracefully degrades if unavailable.
+- **TTFT, Output Speed (TPS) & Model ID**: Queries the local Antigravity `LanguageServerService` (`GetCascadeTrajectoryGeneratorMetadata`) for real `timeToFirstToken` (TTFT), streaming decode TPS, end-to-end TPS, session averages, and active model IDs. Gracefully degrades if unavailable.
 - **Session Cumulative Totals**: Tracks total model calls, cumulative cache reads, cumulative fresh input, cumulative output, and average cache hit rate.
-- **Prompt Turn Cold / Warm Start**: Groups the conversation by user prompt (`USER_INPUT`) and classifies the first model call after each prompt as **Cold Start**, **Partial Cache**, or **Warm Start**, along with net context growth (`+Δ`), call count, TTFT, and weighted TPS.
-- **16-Week Activity Heatmap**: Dedicated **历史热力图** tab aggregating total tokens (`input + cache_read + output`), active days, sessions, and calls across both Antigravity 2.0 desktop and `agy` CLI (`~/.gemini/*/brain`). Click any day cell for a full token breakdown.
+- **Prompt Turn Cold / Warm Start**: Groups the conversation by user prompt (`USER_INPUT`) and classifies the first model call after each prompt as **Cold Start**, **Partial Cache**, or **Warm Start**, along with net context growth (`+Δ`), call count, model ID, TTFT, and weighted TPS.
+- **16-Week Activity Heatmap**: Dedicated **历史热力图** tab aggregating total tokens (`input + cache_read + output`), active days, sessions, and calls across both Antigravity 2.0 desktop and `agy` CLI (`~/.gemini/*/brain`). Click any day cell for a full token and model ID breakdown (`/api/heatmap/day`).
 - **Theme Sync**: Uses Antigravity's injected CSS variables via `/preload.js` to follow your active light, dark, or custom theme automatically.
 
 ## How It Works

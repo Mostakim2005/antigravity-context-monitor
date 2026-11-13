@@ -28,6 +28,7 @@ const STATIC = {
 
 const transcriptCache = new Map(); // path -> { mtimeMs, size, summary }
 const heatmapFileCache = new Map(); // path -> { mtimeMs, size, convId, dailyMap }
+const convSpeedCache = new Map(); // convId -> { mtimeMs, size, speedIndex }
 const titleCache = new Map(); // convId -> { title, fetchedAt }
 const TITLE_TTL_MS = 60_000;
 
@@ -114,7 +115,10 @@ async function getSummary(convId) {
   let summary = parseTranscriptText(readTranscriptFile(loc.path));
   const genMeta = await callLsGeneratorMetadata(convId);
   if (genMeta) {
-    summary = enrichSummaryWithSpeed(summary, buildSpeedIndex(genMeta));
+    const speedIndex = buildSpeedIndex(genMeta);
+    if (convSpeedCache.size > 512) convSpeedCache.clear();
+    convSpeedCache.set(convId, { mtimeMs: st.mtimeMs, size: st.size, speedIndex });
+    summary = enrichSummaryWithSpeed(summary, speedIndex);
   }
   if (transcriptCache.size > 64) transcriptCache.clear();
   transcriptCache.set(loc.path, { mtimeMs: st.mtimeMs, size: st.size, summary });
@@ -246,9 +250,65 @@ function getHeatmapSnapshot(weeks = 16) {
   };
 }
 
+async function getConvSpeedIndex(convId, mtimeMs, size) {
+  const cached = convSpeedCache.get(convId);
+  if (cached && cached.mtimeMs === mtimeMs && cached.size === size) {
+    return cached.speedIndex;
+  }
+  const genMeta = await callLsGeneratorMetadata(convId);
+  if (!genMeta) return null;
+  const speedIndex = buildSpeedIndex(genMeta);
+  if (convSpeedCache.size > 512) convSpeedCache.clear();
+  convSpeedCache.set(convId, { mtimeMs, size, speedIndex });
+  return speedIndex;
+}
+
+async function getHeatmapDayModels(dateKey) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateKey || ''))) {
+    return { date: dateKey || '', models: [] };
+  }
+  // Ensure heatmapFileCache is warm
+  if (heatmapFileCache.size === 0) {
+    getHeatmapSnapshot(16);
+  }
+  const dayItems = [];
+  for (const item of heatmapFileCache.values()) {
+    const bucket = item.dailyMap.get(dateKey);
+    if (bucket && bucket.calls > 0) {
+      dayItems.push({ convId: item.convId, mtimeMs: item.mtimeMs, size: item.size, bucket });
+    }
+  }
+  const modelAgg = new Map(); // model -> { model, calls, totalTokens }
+  await Promise.all(
+    dayItems.map(async ({ convId, mtimeMs, size, bucket }) => {
+      const speedIndex = await getConvSpeedIndex(convId, mtimeMs, size);
+      if (!speedIndex || speedIndex.size === 0) return;
+      for (const st of bucket.stepTokens || []) {
+        const model = speedIndex.get(st.stepIndex)?.model || '';
+        if (!model) continue;
+        let agg = modelAgg.get(model);
+        if (!agg) {
+          agg = { model, calls: 0, totalTokens: 0 };
+          modelAgg.set(model, agg);
+        }
+        agg.calls += 1;
+        agg.totalTokens += st.totalTokens;
+      }
+    }),
+  );
+  const models = [...modelAgg.values()].sort((a, b) => b.totalTokens - a.totalTokens);
+  return { date: dateKey, models };
+}
+
 app.api(
   '/api/heatmap',
   (data) => getHeatmapSnapshot(data.weeks),
+  'GET',
+);
+
+app.api(
+  '/api/heatmap/day',
+  (data) => getHeatmapDayModels(data.date),
   'GET',
 );
 

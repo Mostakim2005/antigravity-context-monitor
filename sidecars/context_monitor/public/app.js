@@ -14,6 +14,7 @@
     activeTab: 'session',
     heatmapData: null,
     selectedDate: null,
+    dayModelsCache: new Map(),
   };
 
   function syncScheme() {
@@ -142,6 +143,7 @@
         : '';
 
       const speedParts = [];
+      if (t.speed?.model) speedParts.push(t.speed.model);
       if (t.speed?.ttftSec != null) speedParts.push(`TTFT ${fmtSec(t.speed.ttftSec)}`);
       const turnTps = t.speed?.streamingTps ?? t.speed?.tps;
       if (turnTps != null) speedParts.push(fmtTps(turnTps));
@@ -177,8 +179,16 @@
 
     const meta = data.meta || {};
     const repoLine = $('repo-line');
-    if (meta.repoName || meta.branch || meta.title) {
-      const parts = [meta.title, meta.repoName, meta.branch ? `@${meta.branch}` : ''].filter(Boolean);
+    const activeModels = data.speedStats?.models?.length
+      ? data.speedStats.models.join(', ')
+      : (data.latest?.speed?.model || '');
+    const parts = [
+      activeModels,
+      meta.title,
+      meta.repoName,
+      meta.branch ? `@${meta.branch}` : '',
+    ].filter(Boolean);
+    if (parts.length > 0) {
       repoLine.textContent = parts.join(' · ');
       repoLine.classList.remove('hidden');
     } else {
@@ -311,7 +321,7 @@
     renderHeatmapDetail(defaultDay);
   }
 
-  function renderHeatmapDetail(day) {
+  async function renderHeatmapDetail(day) {
     const el = $('hm-detail');
     if (!day) {
       el.textContent = '暂无历史数据';
@@ -321,9 +331,28 @@
       el.textContent = `${day.date} · 无模型调用`;
       return;
     }
-    el.innerHTML =
+
+    const baseHtml =
       `<strong>${esc(day.date)}</strong> · 共 ${fmtTokens(day.totalTokens)} (${day.calls} 次调用 · ${day.sessions} 会话)<br>` +
       `Cache ${fmtTokens(day.cacheReadTokens)} · 新增 ${fmtTokens(day.inputTokens)} · 输出 ${fmtTokens(day.outputTokens)}`;
+
+    let models = state.dayModelsCache.get(day.date);
+    if (!models) {
+      el.innerHTML = `${baseHtml}<br>模型：查询中…`;
+      try {
+        const res = await apiGet(`/api/heatmap/day?date=${encodeURIComponent(day.date)}`);
+        models = Array.isArray(res?.models) ? res.models : [];
+        state.dayModelsCache.set(day.date, models);
+      } catch {
+        models = [];
+      }
+      if (state.selectedDate !== day.date) return;
+    }
+
+    const modelText = models.length > 0
+      ? models.map((m) => `${esc(m.model)} (${m.calls}次 · ${fmtTokens(m.totalTokens)})`).join(' · ')
+      : '暂无模型 ID 记录';
+    el.innerHTML = `${baseHtml}<br>模型：${modelText}`;
   }
 
   async function refreshHeatmap() {

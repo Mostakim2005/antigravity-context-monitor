@@ -24,13 +24,13 @@ A zero-dependency Antigravity 2.0 Sidecar UI plugin (`SIDECAR_UI_ENTRYPOINT_AUX_
 ### Option 1: Install from GitHub via `agy`
 
 ```bash
-agy plugin install <your-github-username>/antigravity-context-monitor
+agy plugin install jule-x/antigravity-context-monitor
 ```
 
 ### Option 2: Local Clone & Symlink
 
 ```bash
-git clone https://github.com/<your-github-username>/antigravity-context-monitor.git
+git clone https://github.com/jule-x/antigravity-context-monitor.git
 cd antigravity-context-monitor
 ln -s "$(pwd)" ~/.gemini/config/plugins/antigravity-context-monitor
 ```

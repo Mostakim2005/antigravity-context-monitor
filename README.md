@@ -50,6 +50,16 @@ cd sidecars/context_monitor
 node --test test/*.test.mjs
 ```
 
+## Screenshots
+
+| Current Session | 16-Week Heatmap |
+| --- | --- |
+| ![Current Session](assets/session-monitor.png) | ![16-Week Heatmap](assets/heatmap.png) |
+
+## Community
+
+Thanks to the [LINUX DO](https://linux.do/) community for inspiration and discussions around Antigravity workflows.
+
 ## License
 
 MIT

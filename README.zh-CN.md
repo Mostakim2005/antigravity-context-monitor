@@ -50,6 +50,16 @@ cd sidecars/context_monitor
 node --test test/*.test.mjs
 ```
 
+## 效果预览
+
+| 当前会话监控 | 16 周历史热力图 |
+| --- | --- |
+| ![当前会话监控](assets/session-monitor.png) | ![16 周历史热力图](assets/heatmap.png) |
+
+## 社区鸣谢
+
+感谢 [LINUX DO](https://linux.do/) 社区在 Antigravity 工作流与插件生态方面的交流与启发。
+
 ## 开源协议
 
 MIT

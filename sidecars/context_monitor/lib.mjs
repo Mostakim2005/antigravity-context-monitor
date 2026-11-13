@@ -405,3 +405,193 @@ export function enrichSummaryWithSpeed(summary, speedIndex) {
 export function readTranscriptFile(filePath) {
   return readFileSync(filePath, 'utf-8');
 }
+
+function toLocalDateKey(isoStr) {
+  const d = new Date(isoStr);
+  if (Number.isNaN(d.getTime())) return null;
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function addDaysLocal(date, delta) {
+  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate() + delta);
+  return d;
+}
+
+/**
+ * Find all `brain/` directories across Antigravity desktop and CLI (`~/.gemini/<app>/brain`).
+ */
+export function findAllBrainDirs(env = process.env) {
+  const dirs = new Set();
+  const dataDir = env.ANTIGRAVITY_EXECUTABLE_DATA_DIR;
+  if (dataDir) {
+    for (let d = dataDir; d !== dirname(d); d = dirname(d)) {
+      if (basename(d) !== 'sidecar_data') continue;
+      const b = join(dirname(d), 'brain');
+      if (existsSync(b)) dirs.add(b);
+      break;
+    }
+  }
+  const root = join(homedir(), '.gemini');
+  try {
+    for (const name of readdirSync(root).sort()) {
+      const b = join(root, name, 'brain');
+      if (existsSync(b)) dirs.add(b);
+    }
+  } catch {
+    // Ignore missing ~/.gemini
+  }
+  return [...dirs];
+}
+
+/**
+ * Aggregate a single `transcript.jsonl` into per-local-day token buckets.
+ */
+export function parseTranscriptDaily(text) {
+  const byDay = new Map();
+  const lines = String(text || '').split('\n');
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    let obj;
+    try {
+      obj = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (obj?.type !== 'PLANNER_RESPONSE') continue;
+    const dateKey = toLocalDateKey(obj.created_at);
+    if (!dateKey) continue;
+
+    const inputTokens = toNonNegInt(obj.input_tokens);
+    const cacheReadTokens = toNonNegInt(obj.cache_read_tokens);
+    const outputTokens = toNonNegInt(obj.output_tokens);
+    const totalTokens = inputTokens + cacheReadTokens + outputTokens;
+
+    let bucket = byDay.get(dateKey);
+    if (!bucket) {
+      bucket = { inputTokens: 0, cacheReadTokens: 0, outputTokens: 0, totalTokens: 0, calls: 0 };
+      byDay.set(dateKey, bucket);
+    }
+    bucket.inputTokens += inputTokens;
+    bucket.cacheReadTokens += cacheReadTokens;
+    bucket.outputTokens += outputTokens;
+    bucket.totalTokens += totalTokens;
+    bucket.calls += 1;
+  }
+  return byDay;
+}
+
+/**
+ * Build a N-week GitHub-style activity heatmap from per-conversation daily maps.
+ */
+export function buildHeatmapData(entries, { weeks = 16, now = new Date() } = {}) {
+  const clampedWeeks = Math.min(52, Math.max(4, Math.round(Number(weeks) || 16)));
+  const todayLocal = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayKey = toLocalDateKey(todayLocal.toISOString());
+
+  // Monday = 0 .. Sunday = 6
+  const dow = (todayLocal.getDay() + 6) % 7;
+  const currentMonday = addDaysLocal(todayLocal, -dow);
+  const startDate = addDaysLocal(currentMonday, -(clampedWeeks - 1) * 7);
+  const endDate = addDaysLocal(currentMonday, 6);
+
+  const dayMap = new Map();
+  for (let i = 0; i < clampedWeeks * 7; i++) {
+    const d = addDaysLocal(startDate, i);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    dayMap.set(key, {
+      date: key,
+      month: d.getMonth() + 1,
+      dayOfMonth: d.getDate(),
+      isToday: key === todayKey,
+      isFuture: d > todayLocal,
+      totalTokens: 0,
+      inputTokens: 0,
+      cacheReadTokens: 0,
+      outputTokens: 0,
+      calls: 0,
+      sessions: new Set(),
+    });
+  }
+
+  const allSessions = new Set();
+  for (const entry of entries || []) {
+    if (!entry?.dailyMap) continue;
+    for (const [dateKey, b] of entry.dailyMap.entries()) {
+      const cell = dayMap.get(dateKey);
+      if (!cell || cell.isFuture) continue;
+      cell.totalTokens += b.totalTokens;
+      cell.inputTokens += b.inputTokens;
+      cell.cacheReadTokens += b.cacheReadTokens;
+      cell.outputTokens += b.outputTokens;
+      cell.calls += b.calls;
+      if (entry.convId) {
+        cell.sessions.add(entry.convId);
+        allSessions.add(entry.convId);
+      }
+    }
+  }
+
+  let maxDayTokens = 0;
+  let sumTotal = 0;
+  let sumInput = 0;
+  let sumCache = 0;
+  let sumOutput = 0;
+  let sumCalls = 0;
+  let activeDays = 0;
+
+  for (const cell of dayMap.values()) {
+    if (cell.totalTokens > maxDayTokens) maxDayTokens = cell.totalTokens;
+    if (cell.totalTokens > 0 || cell.calls > 0) activeDays += 1;
+    sumTotal += cell.totalTokens;
+    sumInput += cell.inputTokens;
+    sumCache += cell.cacheReadTokens;
+    sumOutput += cell.outputTokens;
+    sumCalls += cell.calls;
+  }
+
+  const days = [...dayMap.values()].map((cell) => {
+    let level = 0;
+    if (cell.totalTokens > 0 && maxDayTokens > 0) {
+      const ratio = cell.totalTokens / maxDayTokens;
+      if (ratio >= 0.75) level = 4;
+      else if (ratio >= 0.45) level = 3;
+      else if (ratio >= 0.18) level = 2;
+      else level = 1;
+    }
+    return {
+      date: cell.date,
+      month: cell.month,
+      dayOfMonth: cell.dayOfMonth,
+      isToday: cell.isToday,
+      isFuture: cell.isFuture,
+      totalTokens: cell.totalTokens,
+      inputTokens: cell.inputTokens,
+      cacheReadTokens: cell.cacheReadTokens,
+      outputTokens: cell.outputTokens,
+      calls: cell.calls,
+      sessions: cell.sessions.size,
+      level,
+    };
+  });
+
+  return {
+    weeks: clampedWeeks,
+    rangeStart: days[0]?.date || '',
+    rangeEnd: todayKey,
+    maxDayTokens,
+    totals: {
+      totalTokens: sumTotal,
+      inputTokens: sumInput,
+      cacheReadTokens: sumCache,
+      outputTokens: sumOutput,
+      calls: sumCalls,
+      activeDays,
+      sessions: allSessions.size,
+    },
+    days,
+  };
+}

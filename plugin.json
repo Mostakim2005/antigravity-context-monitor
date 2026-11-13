@@ -1,7 +1,7 @@
 {
   "name": "context-monitor",
   "displayName": "Context Monitor",
-  "description": "Live monitor in the auxiliary pane showing 256K compaction headroom, prompt cache hits, TTFT/TPS speed, and per-prompt cold/warm starts.",
+  "description": "Live monitor in the auxiliary pane showing 256K compaction headroom, prompt cache hits, TTFT/TPS speed, per-prompt cold/warm starts, and a 16-week usage heatmap.",
   "version": "0.1.0",
   "logo": "assets/logo.svg",
   "suggestedPrompts": [

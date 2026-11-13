@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import { dirname, join } from 'node:path';
@@ -7,8 +7,11 @@ import { SidecarApp, Response } from 'sidecar_sdk';
 import {
   FIXED_LIMIT_TOKENS,
   ID_RE,
+  buildHeatmapData,
   buildSpeedIndex,
   enrichSummaryWithSpeed,
+  findAllBrainDirs,
+  parseTranscriptDaily,
   parseTranscriptText,
   readTranscriptFile,
   resolveTranscriptFile,
@@ -24,6 +27,7 @@ const STATIC = {
 };
 
 const transcriptCache = new Map(); // path -> { mtimeMs, size, summary }
+const heatmapFileCache = new Map(); // path -> { mtimeMs, size, convId, dailyMap }
 const titleCache = new Map(); // convId -> { title, fetchedAt }
 const TITLE_TTL_MS = 60_000;
 
@@ -198,6 +202,53 @@ app.api(
       ...result.summary,
     };
   },
+  'GET',
+);
+
+function getHeatmapSnapshot(weeks = 16) {
+  const brainDirs = findAllBrainDirs();
+  const entries = [];
+  const seenPaths = new Set();
+
+  for (const brainDir of brainDirs) {
+    let convDirs = [];
+    try {
+      convDirs = readdirSync(brainDir);
+    } catch {
+      continue;
+    }
+    for (const convId of convDirs) {
+      if (!ID_RE.test(convId)) continue;
+      const tp = join(brainDir, convId, '.system_generated', 'logs', 'transcript.jsonl');
+      if (!existsSync(tp)) continue;
+      seenPaths.add(tp);
+      const st = safeStat(tp);
+      if (!st) continue;
+      const cached = heatmapFileCache.get(tp);
+      if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) {
+        entries.push(cached);
+        continue;
+      }
+      const dailyMap = parseTranscriptDaily(readTranscriptFile(tp));
+      const item = { mtimeMs: st.mtimeMs, size: st.size, convId, dailyMap };
+      heatmapFileCache.set(tp, item);
+      entries.push(item);
+    }
+  }
+
+  for (const p of heatmapFileCache.keys()) {
+    if (!seenPaths.has(p)) heatmapFileCache.delete(p);
+  }
+
+  return {
+    sourcesCount: brainDirs.length,
+    ...buildHeatmapData(entries, { weeks }),
+  };
+}
+
+app.api(
+  '/api/heatmap',
+  (data) => getHeatmapSnapshot(data.weeks),
   'GET',
 );
 

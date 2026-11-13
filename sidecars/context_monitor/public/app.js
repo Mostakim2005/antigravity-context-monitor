@@ -11,6 +11,9 @@
     limitTokens: FIXED_LIMIT_TOKENS,
     lastData: null,
     timer: null,
+    activeTab: 'session',
+    heatmapData: null,
+    selectedDate: null,
   };
 
   function syncScheme() {
@@ -258,6 +261,94 @@
     renderTurns(data.recentTurns, data.turnCount);
   }
 
+  function renderHeatmap(hm) {
+    state.heatmapData = hm;
+    const totals = hm.totals || {};
+    $('hm-total').textContent = fmtTokens(totals.totalTokens);
+    $('hm-total').title = `${fmtExact(totals.totalTokens)} tokens`;
+    $('hm-range').textContent = `${hm.rangeStart?.slice(5) || ''} ~ ${hm.rangeEnd?.slice(5) || ''}`;
+    $('hm-days').textContent = `${totals.activeDays ?? 0} 天`;
+    $('hm-sessions').textContent = `${totals.sessions ?? 0} 个会话`;
+    $('hm-calls').textContent = fmtExact(totals.calls ?? 0);
+    $('hm-peak').textContent = `峰值 ${fmtTokens(hm.maxDayTokens)}`;
+
+    const days = hm.days || [];
+    const monthsEl = $('hm-months');
+    const weeksCount = hm.weeks || 16;
+    monthsEl.style.gridTemplateColumns = `repeat(${weeksCount}, minmax(0, 1fr))`;
+    const monthLabels = [];
+    let lastMonth = null;
+    for (let w = 0; w < weeksCount; w++) {
+      const cell = days[w * 7];
+      const m = cell ? cell.month : null;
+      if (m && m !== lastMonth) {
+        monthLabels.push(`<span>${m}月</span>`);
+        lastMonth = m;
+      } else {
+        monthLabels.push('<span></span>');
+      }
+    }
+    monthsEl.innerHTML = monthLabels.join('');
+
+    const defaultDay = days.find((d) => d.date === state.selectedDate) || days.find((d) => d.isToday) || days[days.length - 1];
+    if (defaultDay) state.selectedDate = defaultDay.date;
+
+    const gridEl = $('hm-grid');
+    gridEl.innerHTML = days.map((d) => {
+      const cls = [
+        'hm-cell',
+        `lv${d.level || 0}`,
+        d.isFuture ? 'future' : '',
+        d.isToday ? 'today' : '',
+        d.date === state.selectedDate ? 'selected' : '',
+      ].filter(Boolean).join(' ');
+      const title = d.isFuture
+        ? `${d.date}`
+        : `${d.date}: ${fmtExact(d.totalTokens)} tokens (${d.calls} 次调用)`;
+      return `<button type="button" class="${cls}" data-date="${d.date}" title="${esc(title)}" ${d.isFuture ? 'disabled' : ''}></button>`;
+    }).join('');
+
+    renderHeatmapDetail(defaultDay);
+  }
+
+  function renderHeatmapDetail(day) {
+    const el = $('hm-detail');
+    if (!day) {
+      el.textContent = '暂无历史数据';
+      return;
+    }
+    if (day.calls === 0) {
+      el.textContent = `${day.date} · 无模型调用`;
+      return;
+    }
+    el.innerHTML =
+      `<strong>${esc(day.date)}</strong> · 共 ${fmtTokens(day.totalTokens)} (${day.calls} 次调用 · ${day.sessions} 会话)<br>` +
+      `Cache ${fmtTokens(day.cacheReadTokens)} · 新增 ${fmtTokens(day.inputTokens)} · 输出 ${fmtTokens(day.outputTokens)}`;
+  }
+
+  async function refreshHeatmap() {
+    try {
+      const hm = await apiGet('/api/heatmap?weeks=16');
+      renderHeatmap(hm);
+    } catch {
+      $('hm-detail').textContent = '历史热力图加载失败';
+    }
+  }
+
+  function setTab(tab) {
+    state.activeTab = tab;
+    const isHeatmap = tab === 'heatmap';
+    $('tab-session').classList.toggle('active', !isHeatmap);
+    $('tab-session').setAttribute('aria-selected', String(!isHeatmap));
+    $('tab-heatmap').classList.toggle('active', isHeatmap);
+    $('tab-heatmap').setAttribute('aria-selected', String(isHeatmap));
+    $('view-session').classList.toggle('hidden', isHeatmap);
+    $('view-heatmap').classList.toggle('hidden', !isHeatmap);
+    if (isHeatmap) {
+      refreshHeatmap();
+    }
+  }
+
   async function poll() {
     const conv = currentConv();
     const qs = new URLSearchParams();
@@ -283,8 +374,24 @@
   }
 
   async function init() {
+    $('tab-session').addEventListener('click', () => setTab('session'));
+    $('tab-heatmap').addEventListener('click', () => setTab('heatmap'));
+    $('hm-grid').addEventListener('click', (e) => {
+      const btn = e.target.closest('.hm-cell[data-date]');
+      if (!btn || !state.heatmapData) return;
+      state.selectedDate = btn.dataset.date;
+      const day = (state.heatmapData.days || []).find((d) => d.date === state.selectedDate);
+      for (const el of $('hm-grid').querySelectorAll('.hm-cell.selected')) {
+        el.classList.remove('selected');
+      }
+      btn.classList.add('selected');
+      renderHeatmapDetail(day);
+    });
+
     await poll();
-    state.timer = setInterval(poll, POLL_MS);
+    state.timer = setInterval(() => {
+      if (state.activeTab === 'session') poll();
+    }, POLL_MS);
   }
 
   init();

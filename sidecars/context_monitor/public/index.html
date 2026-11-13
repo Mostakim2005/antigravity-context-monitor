@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Context Monitor</title>
   <script src="/preload.js"></script>
-  <link rel="stylesheet" href="/styles.css?v=3">
+  <link rel="stylesheet" href="/styles.css?v=4">
 </head>
 <body>
   <div class="shell">
@@ -23,13 +23,17 @@
 
       <div id="repo-line" class="repo-line hidden"></div>
 
-      <div class="limit-bar" aria-label="自动压缩窗口上限">
-        <span class="limit-label">自动压缩阈值</span>
+      <div class="limit-bar" aria-label="视图与压缩阈值">
+        <div class="tab-group" role="tablist">
+          <button type="button" id="tab-session" class="tab-btn active" role="tab" aria-selected="true">当前会话</button>
+          <button type="button" id="tab-heatmap" class="tab-btn" role="tab" aria-selected="false">历史热力图</button>
+        </div>
         <span class="preset-btn active" title="Antigravity 2.0 自动压缩阈值约 256K (262,144 tokens)">256K · 262,144</span>
       </div>
     </header>
 
     <main id="content" class="content">
+      <div id="view-session">
       <section id="empty-state" class="card empty-state">
         <div class="empty-title">等待当前会话记录…</div>
         <p id="empty-desc" class="empty-desc">
@@ -144,9 +148,53 @@
           <div id="turns-list" class="steps-list"></div>
         </section>
       </div>
+      </div>
+
+      <section id="view-heatmap" class="heatmap-view hidden">
+        <div class="metrics-grid">
+          <div class="card metric-card">
+            <div class="metric-label">近 16 周全量 Token</div>
+            <div id="hm-total" class="metric-val">—</div>
+            <div id="hm-range" class="metric-sub">—</div>
+          </div>
+          <div class="card metric-card">
+            <div class="metric-label">活跃天数</div>
+            <div id="hm-days" class="metric-val">—</div>
+            <div id="hm-sessions" class="metric-sub">— 个会话</div>
+          </div>
+          <div class="card metric-card">
+            <div class="metric-label">模型调用</div>
+            <div id="hm-calls" class="metric-val">—</div>
+            <div id="hm-peak" class="metric-sub">峰值 —</div>
+          </div>
+        </div>
+
+        <section class="card">
+          <div class="section-head">
+            <span class="section-title">每日 Token 消耗（桌面端 + CLI）</span>
+            <span class="hm-legend" aria-hidden="true">
+              <span>少</span>
+              <i class="hm-cell lv0"></i>
+              <i class="hm-cell lv1"></i>
+              <i class="hm-cell lv2"></i>
+              <i class="hm-cell lv3"></i>
+              <i class="hm-cell lv4"></i>
+              <span>多</span>
+            </span>
+          </div>
+          <div id="hm-months" class="hm-months"></div>
+          <div class="hm-board">
+            <div class="hm-weekdays" aria-hidden="true">
+              <span>一</span><span></span><span>三</span><span></span><span>五</span><span></span><span>日</span>
+            </div>
+            <div id="hm-grid" class="hm-grid" role="grid" aria-label="16周 Token 消耗热力图"></div>
+          </div>
+          <div id="hm-detail" class="hm-detail">点击或悬停格子查看当日明细</div>
+        </section>
+      </section>
     </main>
   </div>
 
-  <script src="/app.js?v=3"></script>
+  <script src="/app.js?v=4"></script>
 </body>
 </html>

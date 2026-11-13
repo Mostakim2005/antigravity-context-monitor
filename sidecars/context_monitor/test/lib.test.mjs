@@ -2,10 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   FIXED_LIMIT_TOKENS,
+  buildHeatmapData,
   buildSpeedIndex,
   enrichSummaryWithSpeed,
   extractPromptText,
   parseDurationSec,
+  parseTranscriptDaily,
   parseTranscriptText,
 } from '../lib.mjs';
 
@@ -173,4 +175,48 @@ test('parseDurationSec and enrichSummaryWithSpeed compute TTFT and weighted TPS'
   assert.equal(enriched.recentTurns[0].speed.streamingTps, 400); // (500+300)/(1+1)
   assert.equal(enriched.speedStats.avgTtftSec, 1.5);
   assert.equal(enriched.speedStats.avgStreamingTps, 400);
+});
+
+test('parseTranscriptDaily and buildHeatmapData aggregate 16-week total tokens', () => {
+  const now = new Date('2026-11-13T12:00:00Z');
+  const t1 = [
+    JSON.stringify({
+      step_index: 1,
+      type: 'PLANNER_RESPONSE',
+      created_at: '2026-11-13T08:00:00Z',
+      input_tokens: 1000,
+      cache_read_tokens: 9000,
+      output_tokens: 500,
+    }),
+    JSON.stringify({
+      step_index: 2,
+      type: 'USER_INPUT',
+      created_at: '2026-11-13T08:01:00Z',
+      content: 'ignored',
+    }),
+  ].join('\n');
+
+  const t2 = JSON.stringify({
+    step_index: 1,
+    type: 'PLANNER_RESPONSE',
+    created_at: '2026-11-12T08:00:00Z',
+    input_tokens: 500,
+    cache_read_tokens: 0,
+    output_tokens: 200,
+  });
+
+  const hm = buildHeatmapData(
+    [
+      { convId: 'conv-a', dailyMap: parseTranscriptDaily(t1) },
+      { convId: 'conv-b', dailyMap: parseTranscriptDaily(t2) },
+    ],
+    { weeks: 16, now },
+  );
+
+  assert.equal(hm.weeks, 16);
+  assert.equal(hm.days.length, 16 * 7);
+  assert.equal(hm.totals.totalTokens, 11200);
+  assert.equal(hm.totals.activeDays, 2);
+  assert.equal(hm.totals.sessions, 2);
+  assert.equal(hm.maxDayTokens, 10500);
 });

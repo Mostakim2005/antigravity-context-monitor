@@ -1,5 +1,7 @@
 # Antigravity Context Monitor
 
+English | [简体中文](README.zh-CN.md)
+
 A zero-dependency Antigravity 2.0 Sidecar UI plugin (`SIDECAR_UI_ENTRYPOINT_AUX_PANE`) that displays real-time context window usage, prompt cache efficiency, TTFT / TPS speed, and per-prompt cold/warm start telemetry in the right-side auxiliary pane.
 
 ## Features

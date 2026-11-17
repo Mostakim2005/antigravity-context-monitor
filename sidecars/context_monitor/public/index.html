@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Context Monitor</title>
   <script src="/preload.js"></script>
-  <link rel="stylesheet" href="/styles.css?v=5">
+  <link rel="stylesheet" href="/styles.css?v=6">
 </head>
 <body>
   <div class="shell">
@@ -28,7 +28,7 @@
           <button type="button" id="tab-session" class="tab-btn active" role="tab" aria-selected="true">当前会话</button>
           <button type="button" id="tab-heatmap" class="tab-btn" role="tab" aria-selected="false">历史热力图</button>
         </div>
-        <span class="preset-btn active" title="Antigravity 2.0 自动压缩阈值约 256K (262,144 tokens)">256K · 262,144</span>
+        <span id="limit-badge" class="preset-btn active" title="当前上下文窗口上限（来自 LanguageServerService，默认 512K）">512K · 512,000</span>
       </div>
     </header>
 
@@ -195,6 +195,6 @@
     </main>
   </div>
 
-  <script src="/app.js?v=5"></script>
+  <script src="/app.js?v=6"></script>
 </body>
 </html>

@@ -6,7 +6,7 @@ A zero-dependency Antigravity 2.0 Sidecar UI plugin (`SIDECAR_UI_ENTRYPOINT_AUX_
 
 ## Features
 
-- **256K Auto-Compaction Gauge**: Tracks `input_tokens + cache_read_tokens` from the latest model call against Antigravity 2.0's `262,144` (256K) auto-compaction threshold, showing remaining room before compaction.
+- **Dynamic Context Window / Auto-Compaction Gauge (512K Default)**: Tracks `input_tokens + cache_read_tokens` from the latest model call against Antigravity's live `maxContextTokens` reported by `LanguageServerService` (falling back to `512,000` / 512K on Antigravity 2.32+), showing remaining room before compaction.
 - **Prompt Cache Breakdown**: Visualizes cached reads (`cache_read_tokens`), fresh uncached input (`input_tokens`), output tokens (`output_tokens`), and cache hit rate.
 - **TTFT, Output Speed (TPS) & Model ID**: Queries the local Antigravity `LanguageServerService` (`GetCascadeTrajectoryGeneratorMetadata`) for real `timeToFirstToken` (TTFT), streaming decode TPS, end-to-end TPS, session averages, and active model IDs. Gracefully degrades if unavailable.
 - **Session Cumulative Totals**: Tracks total model calls, cumulative cache reads, cumulative fresh input, cumulative output, and average cache hit rate.

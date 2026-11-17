@@ -1,6 +1,6 @@
 (() => {
   const POLL_MS = 1200;
-  const FIXED_LIMIT_TOKENS = 262_144;
+  const DEFAULT_LIMIT_TOKENS = 512_000;
   const $ = (id) => document.getElementById(id);
 
   const params = new URLSearchParams(location.search);
@@ -8,7 +8,7 @@
 
   const state = {
     etag: '',
-    limitTokens: FIXED_LIMIT_TOKENS,
+    limitTokens: DEFAULT_LIMIT_TOKENS,
     lastData: null,
     timer: null,
     activeTab: 'session',
@@ -210,6 +210,17 @@
     const latest = data.latest;
     const totals = data.totals;
     const limit = state.limitTokens;
+    const isPow2 = limit > 0 && (limit & (limit - 1)) === 0;
+    const limitShort = limit >= 1_000_000
+      ? `${+(limit / (isPow2 ? 1_048_576 : 1_000_000)).toFixed(2)}M`
+      : `${Math.round(limit / (isPow2 ? 1024 : 1000))}K`;
+    const badgeEl = $('limit-badge');
+    if (badgeEl) {
+      badgeEl.textContent = `${limitShort} · ${fmtExact(limit)}`;
+      badgeEl.title = data.contextLimitTokens
+        ? `当前模型上下文上限（来自 LanguageServerService maxContextTokens: ${fmtExact(limit)}）`
+        : `当前默认上下文上限：${fmtExact(limit)} tokens`;
+    }
     const used = latest.contextUsed;
     const remain = Math.max(0, limit - used);
     const usedRatio = limit > 0 ? used / limit : 0;

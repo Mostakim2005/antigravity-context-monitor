@@ -6,7 +6,7 @@
 
 ## 核心功能
 
-- **256K 自动压缩进度条**：基于最近一次模型调用的 `input_tokens + cache_read_tokens`，对齐 Antigravity 2.0 的 `262,144`（256K）自动压缩阈值，直观展示当前占用与剩余空间。
+- **动态上下文窗口 / 自动压缩进度条（默认 512K）**：基于最近一次模型调用的 `input_tokens + cache_read_tokens`，自动读取 `LanguageServerService` 上报的 `maxContextTokens` 上限（Antigravity 2.32+ 默认回退为 `512,000` / 512K），直观展示当前占用与剩余空间。
 - **Prompt Cache 拆分**：分别展示 Cache 读取（`cache_read_tokens`）、新增未命中输入（`input_tokens`）、输出（`output_tokens`）及命中率。
 - **TTFT、输出速度（TPS）与模型 ID**：通过本地 Antigravity `LanguageServerService`（`GetCascadeTrajectoryGeneratorMetadata`）获取真实的 `timeToFirstToken`（首字延迟）、流式解码 TPS、含首字综合 TPS、会话均值以及当前使用的模型 ID；若接口不可用则自动降级。
 - **本会话累计统计**：汇总会话总调用次数、累计 Cache 读取、累计新增输入、累计输出与平均 Cache 命中率。

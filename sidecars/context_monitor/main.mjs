@@ -186,7 +186,8 @@ app.api(
       };
     }
 
-    const etag = `${result.etag}|${FIXED_LIMIT_TOKENS}`;
+    const limitTokens = result.summary.contextLimitTokens || FIXED_LIMIT_TOKENS;
+    const etag = `${result.etag}|${limitTokens}`;
     if (data.etag && data.etag === etag) {
       return {
         conversationId: conv,
@@ -201,7 +202,7 @@ app.api(
       conversationId: conv,
       found: true,
       etag,
-      limitTokens: FIXED_LIMIT_TOKENS,
+      limitTokens,
       meta,
       ...result.summary,
     };

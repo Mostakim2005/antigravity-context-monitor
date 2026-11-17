@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
 export const ID_RE = /^[0-9a-f-]{8,}$/i;
-export const FIXED_LIMIT_TOKENS = 262_144; // Antigravity 2.0 ~256K auto-compaction threshold
+export const FIXED_LIMIT_TOKENS = 512_000; // Antigravity 2.32+ default 512K context window / compaction threshold
 
 /**
  * Locate the Antigravity app data directories containing a `brain/` folder.
@@ -307,6 +307,7 @@ export function buildSpeedIndex(generatorMetadata) {
       streamingTps,
       tps,
       model: cm.responseModel || cm.model || '',
+      maxContextTokens: toNonNegInt(cm.chatStartMetadata?.contextWindowMetadata?.maxContextTokens),
     };
 
     for (const idx of stepIndices) {
@@ -393,10 +394,23 @@ export function enrichSummaryWithSpeed(summary, speedIndex) {
     }
   }
 
+  let latestMaxContext = latest?.speed?.maxContextTokens || 0;
+  if (!latestMaxContext) {
+    const sortedSteps = [...speedIndex.keys()].sort((a, b) => b - a);
+    for (const stepNum of sortedSteps) {
+      const mct = speedIndex.get(stepNum)?.maxContextTokens || 0;
+      if (mct > 0) {
+        latestMaxContext = mct;
+        break;
+      }
+    }
+  }
+
   return {
     ...summary,
     latest,
     recentTurns,
+    contextLimitTokens: latestMaxContext > 0 ? latestMaxContext : null,
     speedStats: {
       avgTtftSec: ttftCount > 0 ? Number((ttftSum / ttftCount).toFixed(2)) : null,
       avgStreamingTps: streamSecSum > 0 ? Number((streamOutSum / streamSecSum).toFixed(1)) : null,

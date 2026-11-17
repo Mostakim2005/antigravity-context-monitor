@@ -133,8 +133,8 @@ test('parseTranscriptText handles empty transcript', () => {
   assert.deepEqual(out.recentTurns, []);
 });
 
-test('FIXED_LIMIT_TOKENS matches 256K compaction window', () => {
-  assert.equal(FIXED_LIMIT_TOKENS, 262_144);
+test('FIXED_LIMIT_TOKENS matches 512K default context window', () => {
+  assert.equal(FIXED_LIMIT_TOKENS, 512_000);
 });
 
 test('parseDurationSec and enrichSummaryWithSpeed compute TTFT and weighted TPS', () => {
@@ -156,6 +156,9 @@ test('parseDurationSec and enrichSummaryWithSpeed compute TTFT and weighted TPS'
         timeToFirstToken: '2.00s',
         streamingDuration: '1.00s',
         usage: { outputTokens: '500' },
+        chatStartMetadata: {
+          contextWindowMetadata: { maxContextTokens: 256000 },
+        },
       },
     },
     {
@@ -164,6 +167,9 @@ test('parseDurationSec and enrichSummaryWithSpeed compute TTFT and weighted TPS'
         timeToFirstToken: '1.00s',
         streamingDuration: '1.00s',
         usage: { outputTokens: '300' },
+        chatStartMetadata: {
+          contextWindowMetadata: { maxContextTokens: 512000 },
+        },
       },
     },
   ]);
@@ -172,6 +178,7 @@ test('parseDurationSec and enrichSummaryWithSpeed compute TTFT and weighted TPS'
   assert.equal(enriched.latest.speed.ttftSec, 1);
   assert.equal(enriched.latest.speed.streamingTps, 300);
   assert.equal(enriched.latest.speed.tps, 150);
+  assert.equal(enriched.contextLimitTokens, 512000);
   assert.equal(enriched.recentTurns[0].speed.ttftSec, 2);
   assert.equal(enriched.recentTurns[0].speed.streamingTps, 400); // (500+300)/(1+1)
   assert.equal(enriched.recentTurns[0].speed.model, 'gemini-test-model');

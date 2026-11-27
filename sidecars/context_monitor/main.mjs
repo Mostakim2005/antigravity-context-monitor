@@ -17,7 +17,23 @@ import {
   resolveTranscriptFile,
   safeStat,
 } from './lib.mjs';
-import { parseQuotaSummary, parseUserStatusQuotaFallback } from './quotas.mjs';
+import { parseQuotaSummary, parseUserStatusQuotaFallback, extractAICredits } from './quotas.mjs';
+import { computeContextBreakdown } from './breakdown.mjs';
+import { calculateScopeCosts, getCatalogPricingList } from './pricing.mjs';
+import {
+  deleteCustomPricingEntry,
+  exportMonthArchive,
+  getCustomPricingMap,
+  importMonthArchive,
+  listMonthsInDb,
+  openContextDb,
+  queryScopeRows,
+  recordQuotaSamplesAndComputeRunway,
+  resolveDbPath,
+  saveCustomPricingEntry,
+  scanTranscriptIncremental,
+  syncBrainIncremental,
+} from './db.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, 'public');
@@ -27,16 +43,30 @@ const STATIC = {
   '/i18n.js': ['i18n.js', 'application/javascript; charset=utf-8'],
   '/quotas.js': ['quotas.js', 'application/javascript; charset=utf-8'],
   '/sections.js': ['sections.js', 'application/javascript; charset=utf-8'],
+  '/extras.js': ['extras.js', 'application/javascript; charset=utf-8'],
   '/app.js': ['app.js', 'application/javascript; charset=utf-8'],
 };
 
 const transcriptCache = new Map(); // path -> { mtimeMs, size, summary }
 const heatmapFileCache = new Map(); // path -> { mtimeMs, size, convId, dailyMap }
 const convSpeedCache = new Map(); // convId -> { mtimeMs, size, speedIndex }
-const titleCache = new Map(); // convId -> { title, fetchedAt }
+const titleCache = new Map(); // convId -> { title, repoName, branch, fetchedAt }
+const breakdownCache = new Map(); // convId -> { stepKey, payload }
 const TITLE_TTL_MS = 60_000;
 const QUOTA_TTL_MS = 30_000;
+const TRAJ_TTL_MS = 10_000;
+const SCOPE_SYNC_TTL_MS = 5_000;
 let quotaCache = { fetchedAt: 0, payload: null };
+let trajCache = { fetchedAt: 0, list: [], byId: new Map() };
+let lastBrainSyncAt = 0;
+let dbInstance = null;
+
+function getDb() {
+  if (!dbInstance) {
+    dbInstance = openContextDb(resolveDbPath());
+  }
+  return dbInstance;
+}
 
 function callLsRpc(method, payloadObj, timeoutMs = 1500) {
   const rawAddr = String(process.env.ANTIGRAVITY_LS_ADDRESS || '').trim();
@@ -119,15 +149,38 @@ async function getQuotasSnapshot(force = false) {
     return quotaCache.payload;
   }
   const meta = { metadata: { ideName: 'antigravity', extensionName: 'antigravity' } };
-  const summaryRaw = await callLsRpc('RetrieveUserQuotaSummary', meta, 3000);
+  const [summaryRaw, statusRaw] = await Promise.all([
+    callLsRpc('RetrieveUserQuotaSummary', meta, 3000),
+    callLsRpc('GetUserStatus', meta, 3000),
+  ]);
   let parsed = parseQuotaSummary(summaryRaw, now);
-  if (!parsed) {
-    const statusRaw = await callLsRpc('GetUserStatus', meta, 3000);
+  if (!parsed && statusRaw) {
     parsed = parseUserStatusQuotaFallback(statusRaw, now);
   }
-  const payload = parsed
-    ? { available: true, updatedAt: new Date(now).toISOString(), ...parsed }
-    : { available: false, updatedAt: new Date(now).toISOString(), source: null, pools: [] };
+  const aiCredits = extractAICredits(statusRaw);
+  let pools = parsed?.pools || [];
+  if (pools.length > 0) {
+    try {
+      pools = recordQuotaSamplesAndComputeRunway(getDb(), pools, now);
+    } catch {
+      // Keep quotas functional even if SQLite runway history fails
+    }
+  }
+  const payload = parsed || aiCredits.length > 0
+    ? {
+        available: true,
+        updatedAt: new Date(now).toISOString(),
+        source: parsed?.source || (aiCredits.length > 0 ? 'user_status' : null),
+        pools,
+        aiCredits,
+      }
+    : {
+        available: false,
+        updatedAt: new Date(now).toISOString(),
+        source: null,
+        pools: [],
+        aiCredits: [],
+      };
   quotaCache = { fetchedAt: now, payload };
   return payload;
 }
@@ -330,10 +383,315 @@ async function getHeatmapDayModels(dateKey) {
   return { date: dateKey, models };
 }
 
+function parseWorkspaceUrisParam(raw) {
+  if (Array.isArray(raw)) return raw.map(String).filter(Boolean);
+  const str = String(raw || '').trim();
+  if (!str) return [];
+  if (str.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(str);
+      return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
+    } catch {
+      return [];
+    }
+  }
+  return str.split('|').map((s) => s.trim()).filter(Boolean);
+}
+
+function normalizeWsUri(uri) {
+  return decodeURIComponent(String(uri || '').trim())
+    .replace(/^file:\/\/localhost\//i, '/')
+    .replace(/^file:\/\/\//i, '/')
+    .replace(/^file:\/\//i, '')
+    .replace(/\\/g, '/')
+    .replace(/^\/+([a-zA-Z]:)/, '$1')
+    .replace(/\/+$/, '')
+    .toLowerCase();
+}
+
+function inferSubagentMeta(data) {
+  const bags = [data.metadata, data.cascadeMetadata, data.swarmMetadata, data.trajectoryMetadata].filter(
+    (b) => b && typeof b === 'object',
+  );
+  const merged = Object.assign({}, ...bags);
+  const parentCascadeId = String(
+    data.parentCascadeId || data.parentConversationId || merged.parentCascadeId || merged.parentConversationId || '',
+  ).trim();
+  const trajectoryType = String(data.trajectoryType || merged.trajectoryType || '').toLowerCase();
+  const role = String(data.role || data.agentRole || data.swarmRole || merged.role || merged.agentRole || merged.swarmRole || '').trim();
+  const isSubagent = Boolean(
+    data.isSubagent === true ||
+    data.isChild === true ||
+    merged.isSubagent === true ||
+    merged.isChild === true ||
+    parentCascadeId ||
+    data.parentTrajectoryId ||
+    merged.parentTrajectoryId ||
+    trajectoryType.includes('subagent') ||
+    (role && role.toLowerCase() !== 'main' && role.toLowerCase() !== 'coordinator'),
+  );
+  return { isSubagent, parentCascadeId, role };
+}
+
+async function fetchTrajectoriesCached(force = false) {
+  const now = Date.now();
+  if (!force && trajCache.list.length > 0 && now - trajCache.fetchedAt < TRAJ_TTL_MS) {
+    return trajCache;
+  }
+  const resp = await callLsRpc(
+    'GetAllCascadeTrajectories',
+    { metadata: { ideName: 'antigravity', extensionName: 'antigravity' } },
+    2500,
+  );
+  const summaries = resp?.trajectorySummaries;
+  if (!summaries || typeof summaries !== 'object') {
+    return trajCache;
+  }
+  const list = [];
+  const byId = new Map();
+  for (const [cascadeId, raw] of Object.entries(summaries)) {
+    if (!ID_RE.test(cascadeId) || !raw || typeof raw !== 'object') continue;
+    const workspaces = Array.isArray(raw.workspaces) ? raw.workspaces : [];
+    const workspaceUris = workspaces.map((w) => w?.workspaceFolderAbsoluteUri).filter(Boolean);
+    const { isSubagent, parentCascadeId, role } = inferSubagentMeta(raw);
+    const item = {
+      cascadeId,
+      summary: String(raw.summary || '').trim() || cascadeId.slice(0, 8),
+      stepCount: Number(raw.stepCount) || 0,
+      status: String(raw.status || ''),
+      lastModifiedTime: String(raw.lastModifiedTime || raw.createdTime || ''),
+      workspaceUris,
+      workspaceUri: workspaceUris[0] || '',
+      isSubagent,
+      parentCascadeId,
+      role,
+    };
+    list.push(item);
+    byId.set(cascadeId, item);
+  }
+  list.sort((a, b) => {
+    const ta = Date.parse(a.lastModifiedTime) || 0;
+    const tb = Date.parse(b.lastModifiedTime) || 0;
+    return tb - ta;
+  });
+  trajCache = { fetchedAt: now, list, byId };
+  return trajCache;
+}
+
+async function getConversationsSnapshot(data) {
+  const hostConvId = String(data.hostConvId || app.config.conversationId || '').trim();
+  const wsUris = parseWorkspaceUrisParam(data.workspaceUris);
+  const wsNorms = new Set(wsUris.map(normalizeWsUri).filter(Boolean));
+  const trajs = await fetchTrajectoriesCached(data.force === '1');
+  const hostEntry = hostConvId ? trajs.byId.get(hostConvId) || null : null;
+
+  let recommendedMainId = hostConvId;
+  if (hostEntry?.isSubagent) {
+    if (hostEntry.parentCascadeId && trajs.byId.has(hostEntry.parentCascadeId)) {
+      recommendedMainId = hostEntry.parentCascadeId;
+    } else {
+      const hostWs = new Set(hostEntry.workspaceUris.map(normalizeWsUri).filter(Boolean));
+      const candidate = trajs.list.find(
+        (t) => !t.isSubagent && (hostWs.size === 0 || t.workspaceUris.some((u) => hostWs.has(normalizeWsUri(u)))),
+      );
+      if (candidate) recommendedMainId = candidate.cascadeId;
+    }
+  }
+
+  return {
+    hostConvId,
+    hostIsSubagent: Boolean(hostEntry?.isSubagent),
+    recommendedMainId,
+    conversations: trajs.list.slice(0, 60).map((t) => ({
+      ...t,
+      inCurrentWorkspace: wsNorms.size > 0 && t.workspaceUris.some((u) => wsNorms.has(normalizeWsUri(u))),
+    })),
+  };
+}
+
+async function getBreakdownSnapshot(convId) {
+  if (!convId || !ID_RE.test(convId)) {
+    return { available: false, conversationId: convId || null };
+  }
+  const [summaryRes, genMeta] = await Promise.all([
+    getSummary(convId),
+    callLsGeneratorMetadata(convId),
+  ]);
+  const summary = summaryRes?.summary;
+  const usedTokens = summary?.latest?.contextUsed || 0;
+  const limitTokens = summary?.contextLimitTokens || FIXED_LIMIT_TOKENS;
+  const stepKey = `${summaryRes?.etag || convId}|${genMeta?.length || 0}`;
+  const cached = breakdownCache.get(convId);
+  if (cached && cached.stepKey === stepKey) {
+    return cached.payload;
+  }
+
+  const hasDirectSections =
+    Array.isArray(genMeta) &&
+    genMeta.some(
+      (g) =>
+        (Array.isArray(g?.chatModel?.promptSections) && g.chatModel.promptSections.length > 0) ||
+        (Array.isArray(g?.chatModel?.tokenBreakdownGroups) && g.chatModel.tokenBreakdownGroups.length > 0),
+    );
+
+  let steps = [];
+  if (!hasDirectSections) {
+    const stepsResp = await callLsRpc(
+      'GetCascadeTrajectorySteps',
+      { cascadeId: convId, startIndex: 0, endIndex: 1200, stepOffset: 0 },
+      3500,
+    );
+    if (Array.isArray(stepsResp?.steps)) {
+      steps = stepsResp.steps;
+    }
+  }
+
+  const breakdown = computeContextBreakdown({
+    generatorMetadata: genMeta || [],
+    steps,
+    usedTokens,
+    limitTokens,
+  });
+  const payload = {
+    available: breakdown.segments.length > 0,
+    conversationId: convId,
+    ...breakdown,
+  };
+  if (breakdownCache.size > 64) breakdownCache.clear();
+  breakdownCache.set(convId, { stepKey, payload });
+  return payload;
+}
+
+async function getScopeSnapshot(data) {
+  const scope = String(data.scope || 'conversation').trim();
+  const convId = String(data.conversationId || app.config.conversationId || '').trim();
+  const workspaceUris = parseWorkspaceUrisParam(data.workspaceUris);
+  const force = data.force === '1' || data.force === 'true';
+
+  const db = getDb();
+  const trajs = await fetchTrajectoriesCached(false);
+  const workspaceByConv = new Map();
+  for (const t of trajs.list) {
+    workspaceByConv.set(t.cascadeId, {
+      workspaceUri: t.workspaceUri || '',
+      title: t.summary || '',
+    });
+  }
+
+  if (convId && ID_RE.test(convId)) {
+    const loc = resolveTranscriptFile(convId);
+    if (loc) {
+      const wsMeta = workspaceByConv.get(convId);
+      const title = wsMeta?.title || getConvTitle(app, convId).title || '';
+      scanTranscriptIncremental(db, {
+        convId,
+        transcriptPath: loc.path,
+        appSource: loc.source || '',
+        workspaceUri: wsMeta?.workspaceUri || workspaceUris[0] || '',
+        title,
+      });
+    }
+  }
+
+  const now = Date.now();
+  if (scope !== 'conversation' && (force || now - lastBrainSyncAt > SCOPE_SYNC_TTL_MS)) {
+    syncBrainIncremental(db, { workspaceByConv });
+    lastBrainSyncAt = now;
+  }
+
+  const { rows, conversationsCount, archivedMonthsUsed } = queryScopeRows(db, {
+    scope,
+    convId,
+    workspaceUris,
+    nowMs: now,
+  });
+  const customPricing = getCustomPricingMap(db);
+  const cost = calculateScopeCosts(rows, customPricing);
+  const months = listMonthsInDb(db);
+
+  return {
+    scope,
+    conversationId: convId || null,
+    conversationsCount,
+    archivedMonthsUsed,
+    months,
+    customPricingCount: Object.keys(customPricing).length,
+    ...cost,
+  };
+}
+
 app.api(
   '/api/quotas',
   (data) => getQuotasSnapshot(data.force === '1' || data.force === 'true'),
   'GET',
+);
+
+app.api('/api/conversations', (data) => getConversationsSnapshot(data), 'GET');
+
+app.api(
+  '/api/breakdown',
+  (data) => getBreakdownSnapshot(String(data.conversationId || app.config.conversationId || '').trim()),
+  'GET',
+);
+
+app.api('/api/scope', (data) => getScopeSnapshot(data), 'GET');
+
+app.api(
+  '/api/pricing',
+  () => ({ catalog: getCatalogPricingList(getCustomPricingMap(getDb())) }),
+  'GET',
+);
+
+app.api(
+  '/api/pricing',
+  (data) => {
+    const modelKey = String(data.modelKey || '').trim().toLowerCase();
+    if (!modelKey) return { error: 'modelKey required' };
+    const db = getDb();
+    saveCustomPricingEntry(db, {
+      modelKey,
+      label: String(data.label || modelKey),
+      input: Number(data.input) || 0,
+      output: Number(data.output) || 0,
+      cacheRead: Number(data.cacheRead) || 0,
+      cacheWrite: Number(data.cacheWrite) || 0,
+    });
+    return { ok: true, catalog: getCatalogPricingList(getCustomPricingMap(db)) };
+  },
+  'POST',
+);
+
+app.api(
+  '/api/pricing/reset',
+  (data) => {
+    const db = getDb();
+    deleteCustomPricingEntry(db, String(data.modelKey || '').trim().toLowerCase());
+    return { ok: true, catalog: getCatalogPricingList(getCustomPricingMap(db)) };
+  },
+  'POST',
+);
+
+app.api(
+  '/api/archive/export',
+  (data) => {
+    const db = getDb();
+    const bundle = exportMonthArchive(db, String(data.monthKey || ''), {
+      freeze: data.freeze !== false,
+    });
+    return { ok: true, bundle, months: listMonthsInDb(db) };
+  },
+  'POST',
+);
+
+app.api(
+  '/api/archive/import',
+  (data) => {
+    const db = getDb();
+    const bundle = data?.bundle && typeof data.bundle === 'object' ? data.bundle : data;
+    const res = importMonthArchive(db, bundle);
+    return { ok: true, ...res, months: listMonthsInDb(db) };
+  },
+  'POST',
 );
 
 app.api(

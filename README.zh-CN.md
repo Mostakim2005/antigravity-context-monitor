@@ -2,44 +2,33 @@
 
 [English](README.md) | 简体中文
 
-一个零外部依赖的 Antigravity 2.0 Sidecar UI 插件（`SIDECAR_UI_ENTRYPOINT_AUX_PANE`），在右侧辅助面板中实时展示当前会话的上下文占用、Prompt Cache 命中率、TTFT / TPS 速度、按 Prompt 轮次的冷/热启动状态，以及近 16 周历史用量热力图。
+一个轻量级 Antigravity 2.0 Sidecar UI 插件（`SIDECAR_UI_ENTRYPOINT_AUX_PANE`），零外部 npm 依赖，在右侧辅助面板实时展示上下文占用、9 分类构成与前 5 大占用项、Prompt Cache 命中率、TTFT/TPS 速度、按统计范围（`当前 / 项目 / 7天 / 30天 / 全部`）汇总的 API 费用、5h/7d 额度与消耗速率预测、会话切换（支持锁定主对话），以及近 16 周历史热力图。
 
 ## 核心功能
 
-- **动态上下文窗口 / 自动压缩进度条（默认 512K）**：基于最近一次模型调用的 `input_tokens + cache_read_tokens`，自动读取 `LanguageServerService` 上报的 `maxContextTokens` 上限（Antigravity 2.32+ 默认回退为 `512,000` / 512K），直观展示当前占用与剩余空间。
-- **Prompt Cache 拆分**：分别展示 Cache 读取（`cache_read_tokens`）、新增未命中输入（`input_tokens`）、输出（`output_tokens`）及命中率。
-- **TTFT、输出速度（TPS）与模型 ID**：通过本地 Antigravity `LanguageServerService`（`GetCascadeTrajectoryGeneratorMetadata`）获取真实的 `timeToFirstToken`（首字延迟）、流式解码 TPS、含首字综合 TPS、会话均值以及当前使用的模型 ID；若接口不可用则自动降级。
-- **本会话累计统计**：汇总会话总调用次数、累计 Cache 读取、累计新增输入、累计输出与平均 Cache 命中率。
-- **Prompt 轮次 · 冷/热启动**：按每次用户输入（`USER_INPUT`）分组，将每轮首步模型调用判定为 **冷启动**、**部分缓存** 或 **热启动**，并展示净增量（`+Δ`）、调用次数、模型 ID、TTFT 与加权 TPS。
-- **16 周历史热力图**：提供独立的 **历史热力图** 标签页，聚合统计 Antigravity 2.0 桌面端与 `agy` CLI（`~/.gemini/*/brain`）的全量 Token（`input + cache_read + output`）、活跃天数、会话数与调用次数；点击任意日期格子可查看当日 Token 拆分与模型 ID 明细（`/api/heatmap/day`）。
-- **主题同步**：通过 `/preload.js` 读取宿主注入的 CSS 变量，自动适配当前浅色、深色或自定义主题。
+- **EN | 中文 双语切换**：纯前端轻量 i18n 覆盖层（`i18n.js`，默认英文），不修改任何宿主代码。
+- **会话切换与锁定主对话（Lock Main）**：支持下拉切换任意历史会话，开启 **锁定主控** 后在子代理突发执行期间保持跟踪主对话上下文。
+- **5h / 7d 模型额度与耗尽时间预测 + AI 积分**：展示 Gemini 与 Claude/GPT 额度池及重置倒计时，结合 SQLite 采样计算消耗速率（`%/h`）与预计耗尽时间，并展示 `availableCredits`。
+- **DSH 风格范围统计与 API 费用拆解（当前 | 项目 | 7天 | 30天 | 全部）**：
+  - 基于 Node 内置 `node:sqlite` 的字节偏移增量扫描，仅解析新增日志，已归档冻结的月份不再重复扫描。
+  - 展示总费用、`Saved` 缓存节省金额、未命中输入 / 缓存读取 / 输出拆分、按模型汇总与自定义 API 单价（`$/1M`）。
+  - **月度归档导出与冻结**：支持将任意月份统计导出为 JSON 并冻结该月已完结会话，也可随时重新导入 JSON 查看历史月度用量。
+- **上下文窗口进度条与 9 分类明细 + Top 5 占用项**：支持 Exact 精确统计与步骤估算降级。
+- **按需显示/隐藏任意栏目（Sections）**：隐藏后的栏目不发送后端 RPC 与扫描请求。
+- **亮暗主题高对比度与紧凑排版**：自动跟随 Antigravity 浅色/深色主题变量，修正低对比度配色反转。
+- **16 周历史热力图**：聚合桌面端与 `agy` CLI（`~/.gemini/*/brain`）每日用量。
 
-## 工作原理
+## 架构说明与未来 Go 语言重构规划
 
-- **只读本地日志**：读取 `<appData>/brain/<conversationId>/.system_generated/logs/transcript.jsonl`，配合 `mtime`/`size` 缓存与 ETag 增量轮询（`/api/context`）。
-- **增量热力图扫描**：扫描桌面端与 CLI 的 `brain/` 目录，按文件 `mtime`/`size` 缓存，仅重新解析发生变化的会话日志（`/api/heatmap?weeks=16`）。
-- **本地 Language Server RPC**：直接向 `ANTIGRAVITY_LS_ADDRESS` 请求 `timeToFirstToken` 与 `streamingDuration`，不修改任何 Antigravity 客户端文件或 `app.asar`。
-- **零外部 npm 依赖**：仅使用 Node.js 内置模块与 Antigravity 自带的 `sidecar_sdk`。
+详见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+
+- **当前方案（`Alpha 2` — 轻量级 Node.js Sidecar）**：仅使用 Node.js 内置模块（含 `node:sqlite`）与 `sidecar_sdk`，运行内存约 `80–95 MB`（相比传统大体积 Webview/扩展多面板方案大幅精简）。
+- **未来可选演进方向（Go 语言后端）**：由于 `sidecars/context_monitor/public/` 中的前端界面完全基于原生 HTML/CSS/JS，并与后端通过清晰的 JSON REST 接口通信（`/api/context`、`/api/quotas`、`/api/scope`、`/api/breakdown`、`/api/conversations`、`/api/pricing`、`/api/archive/*`、`/api/heatmap`），未来可随时将后端无缝重写为独立 **Go** 二进制（内存约 `8–18 MB`），前端 UI 无需改动。
 
 ## 安装方式
 
-### 方式一：通过 `agy` 从 GitHub 安装
-
 ```bash
-agy plugin install jule-x/antigravity-context-monitor
-```
-
-### 方式二：本地克隆并软链
-
-```bash
-git clone https://github.com/jule-x/antigravity-context-monitor.git
-cd antigravity-context-monitor
-ln -s "$(pwd)" ~/.gemini/config/plugins/antigravity-context-monitor
-```
-
-校验插件格式：
-
-```bash
+agy plugin install Mostakim2005/antigravity-context-monitor
 agy plugin validate ~/.gemini/config/plugins/antigravity-context-monitor --strict
 ```
 
@@ -49,16 +38,6 @@ agy plugin validate ~/.gemini/config/plugins/antigravity-context-monitor --stric
 cd sidecars/context_monitor
 node --test test/*.test.mjs
 ```
-
-## 效果预览
-
-| 当前会话监控 | 16 周历史热力图 |
-| --- | --- |
-| ![当前会话监控](assets/session-monitor.png) | ![16 周历史热力图](assets/heatmap.png) |
-
-## 社区鸣谢
-
-感谢 [LINUX DO](https://linux.do/) 社区在 Antigravity 工作流与插件生态方面的交流与启发。
 
 ## 开源协议
 

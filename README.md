@@ -2,42 +2,46 @@
 
 English | [简体中文](README.zh-CN.md)
 
-A zero-dependency Antigravity 2.0 Sidecar UI plugin (`SIDECAR_UI_ENTRYPOINT_AUX_PANE`) that displays real-time context window usage, prompt cache efficiency, TTFT / TPS speed, and per-prompt cold/warm start telemetry in the right-side auxiliary pane.
+A lightweight Antigravity 2.0 Sidecar UI plugin (`SIDECAR_UI_ENTRYPOINT_AUX_PANE`) that tracks real-time context window consumption, 9-category prompt breakdown + Top 5 largest items, Prompt Cache hit rate, TTFT / TPS speed, scope-based token & API cost attribution, 5h/7d quota burn-rate runway + AI credits, conversation switching (`Lock to Main Agent`), and a 16-week activity heatmap in the right-side auxiliary pane.
 
 ## Features
 
-- **Dynamic Context Window / Auto-Compaction Gauge (512K Default)**: Tracks `input_tokens + cache_read_tokens` from the latest model call against Antigravity's live `maxContextTokens` reported by `LanguageServerService` (falling back to `512,000` / 512K on Antigravity 2.32+), showing remaining room before compaction.
-- **Prompt Cache Breakdown**: Visualizes cached reads (`cache_read_tokens`), fresh uncached input (`input_tokens`), output tokens (`output_tokens`), and cache hit rate.
-- **TTFT, Output Speed (TPS) & Model ID**: Queries the local Antigravity `LanguageServerService` (`GetCascadeTrajectoryGeneratorMetadata`) for real `timeToFirstToken` (TTFT), streaming decode TPS, end-to-end TPS, session averages, and active model IDs. Gracefully degrades if unavailable.
-- **Session Cumulative Totals**: Tracks total model calls, cumulative cache reads, cumulative fresh input, cumulative output, and average cache hit rate.
-- **Prompt Turn Cold / Warm Start**: Groups the conversation by user prompt (`USER_INPUT`) and classifies the first model call after each prompt as **Cold Start**, **Partial Cache**, or **Warm Start**, along with net context growth (`+Δ`), call count, model ID, TTFT, and weighted TPS.
-- **16-Week Activity Heatmap**: Dedicated **历史热力图** tab aggregating total tokens (`input + cache_read + output`), active days, sessions, and calls across both Antigravity 2.0 desktop and `agy` CLI (`~/.gemini/*/brain`). Click any day cell for a full token and model ID breakdown (`/api/heatmap/day`).
-- **Theme Sync**: Uses Antigravity's injected CSS variables via `/preload.js` to follow your active light, dark, or custom theme automatically.
+- **EN | 中文 Language Switcher**: Instant client-side bilingual toggle (`i18n.js`, default English) with zero host patching.
+- **Conversation Switcher & Lock to Main Agent**: Switch tracked conversations directly from the sidecar or toggle **Lock Main** so subagent bursts never hijack the active main session gauge.
+- **5h & 7d Model Quotas + Burn-Rate Runway & AI Credits**: Displays Gemini and Claude/GPT quota pools with countdowns, SQLite-backed burn-rate runway estimates (`Safe · X%/h` vs estimated exhaustion time), and `availableCredits`.
+- **DSH-Style Scope Switcher & API Cost Attribution (`Active | Project | 7d | 30d | All`)**:
+  - Incremental byte-offset SQLite scanner (`node:sqlite`, zero external DB binaries) indexing `transcript.jsonl` without re-parsing unchanged files or frozen months.
+  - Shows total USD cost, Cache Saved (`$`), separated **Input (cache miss)** / **Cache hit** / **Output**, per-model cost breakdown, and editable custom API pricing (`$/1M`).
+  - **Monthly Archive Export & Freeze**: Export any month's ledger as JSON and freeze closed sessions so historical months are never rescanned, plus one-click JSON re-import for historical viewing.
+- **Dynamic Context Window Gauge + 9-Category Breakdown**: Tracks live context occupancy against `maxContextTokens` (default 512K) plus a 9-category stacked breakdown bar and Top 5 largest context consumers.
+- **Hide / Show Any Section (`Sections`)**: Completely hide unused panels (`0` background RPCs/scans when hidden).
+- **Theme Contrast Parity**: Automatically syncs with Antigravity Light and Dark theme variables with high-contrast WCAG-tuned badges and compact density.
+- **16-Week Activity Heatmap**: Dedicated daily heatmap across Antigravity desktop and `agy` CLI (`~/.gemini/*/brain`).
 
-## How It Works
+## Architecture & Future Go Migration Note
 
-- **Read-only local transcript**: Parses `<appData>/brain/<conversationId>/.system_generated/logs/transcript.jsonl` with `mtime`/`size` caching and ETag polling (`/api/context`).
-- **Incremental heatmap scanner**: Scans all desktop and CLI `brain/` directories with per-file `mtime`/`size` caching (`/api/heatmap?weeks=16`), updating only changed transcripts.
-- **Local Language Server RPC**: Fetches `timeToFirstToken` and `streamingDuration` from `ANTIGRAVITY_LS_ADDRESS` without modifying any Antigravity client files or `app.asar`.
-- **Zero external npm dependencies**: Uses only Node.js built-in modules and Antigravity's `sidecar_sdk`.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the endpoint/data-flow map.
+
+- **Current Runtime (`Alpha 2` — Lightweight Node.js Sidecar)**: Zero external npm dependencies; runs on Node.js built-ins + Antigravity's `sidecar_sdk` + built-in `node:sqlite` (~80–95 MB process RSS vs ~580–650 MB for Chromium/Electron multi-tab webview dashboards).
+- **Planned Future Consideration (Go Backend)**: Because all frontend assets in `sidecars/context_monitor/public/` are pure framework-free vanilla HTML/CSS/JS talking over clean JSON REST routes (`/api/context`, `/api/quotas`, `/api/scope`, `/api/breakdown`, `/api/conversations`, `/api/pricing`, `/api/archive/*`, `/api/heatmap`), the backend sidecar can optionally be ported to a standalone **Go** HTTP binary (`~8–18 MB` RAM) in a future milestone without changing any UI code or `app.asar`.
 
 ## Installation
 
 ### Option 1: Install from GitHub via `agy`
 
 ```bash
-agy plugin install jule-x/antigravity-context-monitor
+agy plugin install Mostakim2005/antigravity-context-monitor
 ```
 
 ### Option 2: Local Clone & Symlink
 
 ```bash
-git clone https://github.com/jule-x/antigravity-context-monitor.git
+git clone https://github.com/Mostakim2005/antigravity-context-monitor.git
 cd antigravity-context-monitor
 ln -s "$(pwd)" ~/.gemini/config/plugins/antigravity-context-monitor
 ```
 
-Then validate:
+Validate plugin structure:
 
 ```bash
 agy plugin validate ~/.gemini/config/plugins/antigravity-context-monitor --strict
@@ -50,15 +54,9 @@ cd sidecars/context_monitor
 node --test test/*.test.mjs
 ```
 
-## Screenshots
-
-| Current Session | 16-Week Heatmap |
-| --- | --- |
-| ![Current Session](assets/session-monitor.png) | ![16-Week Heatmap](assets/heatmap.png) |
-
 ## Community
 
-Thanks to the [LINUX DO](https://linux.do/) community for inspiration and discussions around Antigravity workflows.
+Thanks to [jule-x](https://github.com/jule-x/antigravity-context-monitor) for the original sidecar monitor and the [LINUX DO](https://linux.do/) community.
 
 ## License
 

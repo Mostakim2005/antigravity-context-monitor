@@ -170,3 +170,22 @@ export function parseUserStatusQuotaFallback(raw, nowMs = Date.now()) {
     .map(({ pool, label, fiveHour, weekly }) => ({ pool, label, fiveHour, weekly }));
   return { source: 'user_status', pools };
 }
+
+export function extractAICredits(rawUserStatus) {
+  const userStatus = rawUserStatus?.userStatus;
+  if (!userStatus || typeof userStatus !== 'object') return [];
+  const rawCredits = userStatus.userTier?.availableCredits;
+  if (!Array.isArray(rawCredits)) return [];
+  const out = [];
+  for (const c of rawCredits) {
+    if (!c || typeof c.creditType !== 'string') continue;
+    const rawAmt = c.creditAmount;
+    const amt = typeof rawAmt === 'number' ? rawAmt : Number(rawAmt);
+    if (!Number.isFinite(amt)) continue;
+    out.push({
+      creditType: c.creditType.replace(/^CREDIT_TYPE_/, ''),
+      amount: Math.round(amt),
+    });
+  }
+  return out;
+}

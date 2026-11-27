@@ -2,8 +2,11 @@
   const STORAGE_KEY = 'cm_sections_v1';
 
   const SECTION_DEFS = [
+    { key: 'switcher', en: 'Chat Switcher / Lock', zh: '会话切换 / 锁定主控', defaultOn: true },
     { key: 'quotas', en: '5h / 7d Quotas', zh: '5h / 7d 额度', defaultOn: true },
+    { key: 'scopeCost', en: 'Scope & Cost', zh: '统计范围与费用', defaultOn: true },
     { key: 'gauge', en: 'Context Gauge', zh: '上下文占用条', defaultOn: true },
+    { key: 'breakdown', en: 'Context Breakdown', zh: '上下文构成与 Top 5', defaultOn: true },
     { key: 'tokenMetrics', en: 'Cache / Input / Out', zh: '缓存 / 新增 / 输出', defaultOn: true },
     { key: 'speedMetrics', en: 'TTFT / TPS / Time', zh: '首字 / 速度 / 耗时', defaultOn: true },
     { key: 'totals', en: 'Session Totals', zh: '本会话累计', defaultOn: true },
@@ -48,8 +51,11 @@
     const dash = document.getElementById('dashboard');
     const grids = dash ? dash.querySelectorAll(':scope > .metrics-grid') : [];
     return {
+      switcher: document.getElementById('switcher-bar'),
       quotas: document.getElementById('quotas-card'),
+      scopeCost: document.getElementById('scope-cost-card'),
       gauge: dash?.querySelector(':scope > .gauge-card') || null,
+      breakdown: document.getElementById('breakdown-card'),
       tokenMetrics: grids[0] || null,
       speedMetrics: grids[1] || null,
       totals: dash?.querySelector(':scope > .totals-card') || null,

@@ -13,8 +13,19 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
       - name: Run unit and i18n tests
         run: node --test sidecars/context_monitor/test/*.test.mjs
       - name: Check sidecar syntax
-        run: node --check sidecars/context_monitor/main.mjs && node --check sidecars/context_monitor/lib.mjs && node --check sidecars/context_monitor/quotas.mjs && node --check sidecars/context_monitor/public/i18n.js && node --check sidecars/context_monitor/public/quotas.js && node --check sidecars/context_monitor/public/sections.js
+        run: >
+          node --check sidecars/context_monitor/main.mjs &&
+          node --check sidecars/context_monitor/lib.mjs &&
+          node --check sidecars/context_monitor/quotas.mjs &&
+          node --check sidecars/context_monitor/pricing.mjs &&
+          node --check sidecars/context_monitor/breakdown.mjs &&
+          node --check sidecars/context_monitor/db.mjs &&
+          node --check sidecars/context_monitor/public/i18n.js &&
+          node --check sidecars/context_monitor/public/quotas.js &&
+          node --check sidecars/context_monitor/public/sections.js &&
+          node --check sidecars/context_monitor/public/extras.js &&
+          node --check sidecars/context_monitor/public/app.js

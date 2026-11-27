@@ -51,6 +51,45 @@
     `;
   }
 
+  function fmtMin(min, lang) {
+    const m = Math.max(1, Math.round(Number(min) || 0));
+    if (m >= 60) {
+      const h = Math.floor(m / 60);
+      const r = m % 60;
+      return lang === 'en' ? `${h}h ${r}m` : `${h}小时${r}分`;
+    }
+    return lang === 'en' ? `${m}m` : `${m}分钟`;
+  }
+
+  function renderRunwayPill(runway, lang) {
+    if (!runway || !runway.status || runway.status === 'insufficient_data') return '';
+    if (runway.status === 'exhausted') {
+      return `<span class="q-runway is-danger">${lang === 'en' ? 'Exhausted' : '已耗尽'}</span>`;
+    }
+    if (runway.status === 'safe_until_reset') {
+      const txt = lang === 'en'
+        ? `Safe · ${runway.burnRatePctPerHour}%/h`
+        : `可撑到重置 · ${runway.burnRatePctPerHour}%/h`;
+      return `<span class="q-runway is-safe">${esc(txt)}</span>`;
+    }
+    if (runway.status === 'at_risk' && runway.estExhaustMin != null) {
+      const txt = lang === 'en'
+        ? `~${fmtMin(runway.estExhaustMin, 'en')} left · ${runway.burnRatePctPerHour}%/h`
+        : `约 ${fmtMin(runway.estExhaustMin, 'zh')} · ${runway.burnRatePctPerHour}%/h`;
+      return `<span class="q-runway is-risk">${esc(txt)}</span>`;
+    }
+    return '';
+  }
+
+  function renderCreditsRow(aiCredits, lang) {
+    if (!Array.isArray(aiCredits) || aiCredits.length === 0) return '';
+    const pills = aiCredits.map((c) => {
+      const name = String(c.creditType || 'CREDITS').replace(/_/g, ' ').toLowerCase();
+      return `<span class="q-credit-pill">${esc(name)}: <strong>${Number(c.amount || 0).toLocaleString('en-US')}</strong></span>`;
+    }).join('');
+    return `<div class="q-credits-row"><span class="q-credits-label">${lang === 'en' ? 'AI Credits' : 'AI 积分'}</span><div class="q-credits-pills">${pills}</div></div>`;
+  }
+
   function render() {
     const card = document.getElementById('quotas-card');
     if (!card) return;
@@ -61,18 +100,24 @@
     let bodyHtml = '';
     if (!lastData) {
       bodyHtml = `<div class="q-note">${lang === 'en' ? 'Loading quotas…' : '正在获取额度…'}</div>`;
-    } else if (!lastData.available || !Array.isArray(lastData.pools) || lastData.pools.length === 0) {
+    } else if (!lastData.available || (!lastData.pools?.length && !lastData.aiCredits?.length)) {
       bodyHtml = `<div class="q-note">${lang === 'en' ? 'Quota telemetry unavailable from LanguageServer.' : '暂未获取到 LanguageServer 额度信息。'}</div>`;
     } else {
-      bodyHtml = `<div class="q-pools">${lastData.pools.map((p) => `
-        <div class="q-pool">
-          <div class="q-pool-name">${esc(p.label)}</div>
-          <div class="q-win-grid">
-            ${renderWindowRow('5h', p.fiveHour, lang)}
-            ${renderWindowRow('7d', p.weekly, lang)}
+      const poolsHtml = (lastData.pools || []).length > 0
+        ? `<div class="q-pools">${lastData.pools.map((p) => `
+          <div class="q-pool">
+            <div class="q-pool-head">
+              <span class="q-pool-name">${esc(p.label)}</span>
+              ${renderRunwayPill(p.runway, lang)}
+            </div>
+            <div class="q-win-grid">
+              ${renderWindowRow('5h', p.fiveHour, lang)}
+              ${renderWindowRow('7d', p.weekly, lang)}
+            </div>
           </div>
-        </div>
-      `).join('')}</div>`;
+        `).join('')}</div>`
+        : '';
+      bodyHtml = poolsHtml + renderCreditsRow(lastData.aiCredits, lang);
     }
 
     card.innerHTML = `

@@ -156,7 +156,7 @@
     if (!el || el.nodeType !== 1) return false;
     const tag = el.tagName;
     if (tag === 'SCRIPT' || tag === 'STYLE') return true;
-    if (el.closest?.('#repo-line, #cm-lang-toggle, #quotas-card, #cm-sections-drawer, #cm-sections-btn')) return true;
+    if (el.closest?.('#repo-line, #cm-lang-toggle, #quotas-card, #cm-sections-drawer, #cm-sections-btn, #switcher-bar, #scope-cost-card, #breakdown-card')) return true;
     if (el.classList?.contains('turn-prompt')) return true;
     return false;
   }

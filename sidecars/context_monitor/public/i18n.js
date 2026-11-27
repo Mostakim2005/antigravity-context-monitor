@@ -156,7 +156,7 @@
     if (!el || el.nodeType !== 1) return false;
     const tag = el.tagName;
     if (tag === 'SCRIPT' || tag === 'STYLE') return true;
-    if (el.id === 'repo-line' || el.id === 'cm-lang-toggle') return true;
+    if (el.closest?.('#repo-line, #cm-lang-toggle, #quotas-card, #cm-sections-drawer, #cm-sections-btn')) return true;
     if (el.classList?.contains('turn-prompt')) return true;
     return false;
   }
@@ -305,11 +305,16 @@
     updateToggleUi();
   }
 
+  const listeners = new Set();
+
   function setLang(lang) {
     if (!SUPPORTED.has(lang) || lang === currentLang) return;
     currentLang = lang;
     saveLang(lang);
     applyAll();
+    for (const fn of listeners) {
+      try { fn(lang); } catch { /* ignore */ }
+    }
   }
 
   function startObserver() {
@@ -360,5 +365,10 @@
     translateText,
     getLang: () => currentLang,
     setLang,
+    onChange: (fn) => {
+      if (typeof fn !== 'function') return () => {};
+      listeners.add(fn);
+      return () => listeners.delete(fn);
+    },
   };
 })();

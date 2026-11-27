@@ -17,6 +17,7 @@ import {
   resolveTranscriptFile,
   safeStat,
 } from './lib.mjs';
+import { parseQuotaSummary, parseUserStatusQuotaFallback } from './quotas.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, 'public');
@@ -24,6 +25,8 @@ const PUBLIC_DIR = join(__dirname, 'public');
 const STATIC = {
   '/styles.css': ['styles.css', 'text/css; charset=utf-8'],
   '/i18n.js': ['i18n.js', 'application/javascript; charset=utf-8'],
+  '/quotas.js': ['quotas.js', 'application/javascript; charset=utf-8'],
+  '/sections.js': ['sections.js', 'application/javascript; charset=utf-8'],
   '/app.js': ['app.js', 'application/javascript; charset=utf-8'],
 };
 
@@ -32,24 +35,22 @@ const heatmapFileCache = new Map(); // path -> { mtimeMs, size, convId, dailyMap
 const convSpeedCache = new Map(); // convId -> { mtimeMs, size, speedIndex }
 const titleCache = new Map(); // convId -> { title, fetchedAt }
 const TITLE_TTL_MS = 60_000;
+const QUOTA_TTL_MS = 30_000;
+let quotaCache = { fetchedAt: 0, payload: null };
 
-function callLsGeneratorMetadata(convId) {
+function callLsRpc(method, payloadObj, timeoutMs = 1500) {
   const rawAddr = String(process.env.ANTIGRAVITY_LS_ADDRESS || '').trim();
   const csrf = String(process.env.ANTIGRAVITY_CSRF_TOKEN || '').trim();
   if (!rawAddr || !csrf) return Promise.resolve(null);
 
   const hasProto = /^https?:\/\//i.test(rawAddr);
   const candidates = hasProto ? [rawAddr] : [`https://${rawAddr}`, `http://${rawAddr}`];
-  const body = JSON.stringify({
-    cascadeId: convId,
-    generatorMetadataOffset: 0,
-    includeMessages: false,
-  });
+  const body = JSON.stringify(payloadObj || {});
 
   const postOne = (baseUrl) =>
     new Promise((resolve) => {
       const mod = baseUrl.startsWith('https://') ? https : http;
-      const url = `${baseUrl.replace(/\/$/, '')}/exa.language_server_pb.LanguageServerService/GetCascadeTrajectoryGeneratorMetadata`;
+      const url = `${baseUrl.replace(/\/$/, '')}/exa.language_server_pb.LanguageServerService/${method}`;
       const req = mod.request(
         url,
         {
@@ -79,15 +80,14 @@ function callLsGeneratorMetadata(convId) {
               return;
             }
             try {
-              const json = JSON.parse(text);
-              resolve(Array.isArray(json?.generatorMetadata) ? json.generatorMetadata : null);
+              resolve(JSON.parse(text));
             } catch {
               resolve(null);
             }
           });
         },
       );
-      req.setTimeout(1500, () => {
+      req.setTimeout(timeoutMs, () => {
         req.destroy();
         resolve(null);
       });
@@ -102,6 +102,34 @@ function callLsGeneratorMetadata(convId) {
     }
     return null;
   })();
+}
+
+async function callLsGeneratorMetadata(convId) {
+  const json = await callLsRpc('GetCascadeTrajectoryGeneratorMetadata', {
+    cascadeId: convId,
+    generatorMetadataOffset: 0,
+    includeMessages: false,
+  });
+  return Array.isArray(json?.generatorMetadata) ? json.generatorMetadata : null;
+}
+
+async function getQuotasSnapshot(force = false) {
+  const now = Date.now();
+  if (!force && quotaCache.payload && now - quotaCache.fetchedAt < QUOTA_TTL_MS) {
+    return quotaCache.payload;
+  }
+  const meta = { metadata: { ideName: 'antigravity', extensionName: 'antigravity' } };
+  const summaryRaw = await callLsRpc('RetrieveUserQuotaSummary', meta, 3000);
+  let parsed = parseQuotaSummary(summaryRaw, now);
+  if (!parsed) {
+    const statusRaw = await callLsRpc('GetUserStatus', meta, 3000);
+    parsed = parseUserStatusQuotaFallback(statusRaw, now);
+  }
+  const payload = parsed
+    ? { available: true, updatedAt: new Date(now).toISOString(), ...parsed }
+    : { available: false, updatedAt: new Date(now).toISOString(), source: null, pools: [] };
+  quotaCache = { fetchedAt: now, payload };
+  return payload;
 }
 
 async function getSummary(convId) {
@@ -301,6 +329,12 @@ async function getHeatmapDayModels(dateKey) {
   const models = [...modelAgg.values()].sort((a, b) => b.totalTokens - a.totalTokens);
   return { date: dateKey, models };
 }
+
+app.api(
+  '/api/quotas',
+  (data) => getQuotasSnapshot(data.force === '1' || data.force === 'true'),
+  'GET',
+);
 
 app.api(
   '/api/heatmap',

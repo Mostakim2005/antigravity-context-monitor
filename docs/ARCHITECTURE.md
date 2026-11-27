@@ -39,4 +39,5 @@ flowchart LR
 > **1-Line Summary:** `[DECIDED BY: HUMAN]` Keep the lightweight zero-dependency Node.js (`node:sqlite`) backend for immediate Antigravity portability (~80–95 MB RSS), with a clean option to swap the HTTP backend to a compiled Go binary (~8–18 MB RSS) in the future without altering `public/`.
 
 * **Rationale:** Every UI module (`public/*.js`, `public/styles.css`, `public/index.html`) interacts exclusively through documented JSON endpoints (`/api/context`, `/api/quotas`, `/api/scope`, `/api/breakdown`, `/api/conversations`, `/api/pricing`, `/api/archive/export`, `/api/archive/import`, `/api/heatmap`). Replacing `main.mjs` + `.mjs` libraries with a single Go executable later requires zero frontend or `app.asar` changes.
+* **Links:** `[FEATURE: Parity-Inventory-Ledger]` (`docs/PORTING_MATRIX.md`)
 * **Verified By:** `sidecars/context_monitor/test/features.test.mjs :: db incremental scanning, scope queries, monthly freeze/archive import, quota runway, and custom pricing`

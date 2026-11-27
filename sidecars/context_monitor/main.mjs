@@ -526,23 +526,42 @@ async function getBreakdownSnapshot(convId) {
     return cached.payload;
   }
 
-  const hasDirectSections =
-    Array.isArray(genMeta) &&
-    genMeta.some(
-      (g) =>
-        (Array.isArray(g?.chatModel?.promptSections) && g.chatModel.promptSections.length > 0) ||
-        (Array.isArray(g?.chatModel?.tokenBreakdownGroups) && g.chatModel.tokenBreakdownGroups.length > 0),
-    );
+  const sectionTokenCount = (sec) =>
+    Number(sec?.numTokens ?? sec?.tokens ?? sec?.tokenCount ?? sec?.estimatedTokens ?? sec?.contentLen) || 0;
+
+  let hasSubstantialSections = false;
+  if (Array.isArray(genMeta)) {
+    for (let i = genMeta.length - 1; i >= 0; i--) {
+      const cm = genMeta[i]?.chatModel;
+      if (!cm) continue;
+      const secSum = Array.isArray(cm.promptSections)
+        ? cm.promptSections.reduce((s, x) => s + Math.max(0, sectionTokenCount(x)), 0)
+        : 0;
+      const grpSum = Array.isArray(cm.tokenBreakdownGroups)
+        ? cm.tokenBreakdownGroups.reduce((s, x) => s + Math.max(0, Number(x?.numTokens ?? x?.tokens ?? x?.tokenCount) || 0), 0)
+        : 0;
+      if (secSum + grpSum > Math.max(100, usedTokens * 0.5)) {
+        hasSubstantialSections = true;
+        break;
+      }
+    }
+  }
 
   let steps = [];
-  if (!hasDirectSections) {
-    const stepsResp = await callLsRpc(
-      'GetCascadeTrajectorySteps',
-      { cascadeId: convId, startIndex: 0, endIndex: 1200, stepOffset: 0 },
-      3500,
-    );
-    if (Array.isArray(stepsResp?.steps)) {
-      steps = stepsResp.steps;
+  if (!hasSubstantialSections) {
+    const targetSteps = Math.max(500, (summary?.latest?.stepIndex || 0) + 50);
+    for (let batch = 0; batch < 4; batch++) {
+      const start = steps.length;
+      const end = Math.min(targetSteps, start + 500);
+      const stepsResp = await callLsRpc(
+        'GetCascadeTrajectorySteps',
+        { cascadeId: convId, startIndex: start, endIndex: end, stepOffset: start },
+        3500,
+      );
+      const page = Array.isArray(stepsResp?.steps) ? stepsResp.steps : [];
+      if (page.length === 0) break;
+      steps.push(...page);
+      if (steps.length >= targetSteps || page.length < 200) break;
     }
   }
 

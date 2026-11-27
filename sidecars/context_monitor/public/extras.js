@@ -273,13 +273,16 @@
       : '即使切换到子代理，也锁定跟踪主对话';
 
     bar.innerHTML = `
+      <div class="section-head switcher-head">
+        <span class="section-title">${lang === 'en' ? 'Chat Switcher / Lock' : '会话切换 / 锁定主控'}</span>
+        <button type="button" id="cm-lock-main-btn" class="preset-btn cm-lock-btn${switchState.lockMain ? ' active' : ''}" title="${esc(lockTitle)}" aria-pressed="${switchState.lockMain}">
+          ${lockLabel}
+        </button>
+      </div>
       <div class="switcher-row">
         <select id="cm-conv-select" class="cm-select" aria-label="${lang === 'en' ? 'Select conversation' : '选择会话'}">
           ${options}
         </select>
-        <button type="button" id="cm-lock-main-btn" class="preset-btn cm-lock-btn${switchState.lockMain ? ' active' : ''}" title="${esc(lockTitle)}" aria-pressed="${switchState.lockMain}">
-          ${lockLabel}
-        </button>
       </div>
       ${
         lockedSub
@@ -426,8 +429,8 @@
     card.innerHTML = `
       <div class="section-head">
         <span class="section-title">${lang === 'en' ? 'Usage & Cost' : '用量与费用'}</span>
-        <div class="sc-pills">${pillsHtml}</div>
       </div>
+      <div class="sc-pills">${pillsHtml}</div>
 
       ${wsNotice}
 
@@ -484,7 +487,7 @@
     if (!card) return;
     const lang = getLang();
     const bd = runtime.breakdownData;
-    const title = lang === 'en' ? 'Context Breakdown (9 Categories)' : '上下文构成（9 分类）';
+    const title = lang === 'en' ? 'Context Breakdown' : '上下文构成';
 
     if (!bd || !bd.available || !Array.isArray(bd.segments) || bd.segments.length === 0) {
       card.innerHTML = `
@@ -501,7 +504,9 @@
     const srcLabel =
       bd.source === 'prompt_sections' || bd.source === 'token_breakdown'
         ? (lang === 'en' ? 'Exact' : '精确统计')
-        : (lang === 'en' ? 'Step Est.' : '步骤估算');
+        : bd.source === 'steps_estimated'
+          ? (lang === 'en' ? 'Step Est.' : '步骤估算')
+          : (lang === 'en' ? 'Summary' : '摘要估算');
 
     const barHtml = bd.segments
       .map(

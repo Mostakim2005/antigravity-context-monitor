@@ -77,6 +77,18 @@ function estimateCharsTokens(step) {
   }
 }
 
+function extractSectionTokens(sec) {
+  if (!sec || typeof sec !== 'object') return 0;
+  const direct =
+    toNum(sec.numTokens) ||
+    toNum(sec.tokens) ||
+    toNum(sec.tokenCount) ||
+    toNum(sec.estimatedTokens);
+  if (direct > 0) return direct;
+  const len = toNum(sec.contentLen) || (typeof sec.content === 'string' ? sec.content.length : 0);
+  return len > 0 ? Math.round(len / 4) : 0;
+}
+
 export function computeContextBreakdown({
   generatorMetadata = [],
   steps = [],
@@ -98,14 +110,17 @@ export function computeContextBreakdown({
       if (!gmUsed && cm.usage) {
         gmUsed = toNum(cm.usage.inputTokens) + toNum(cm.usage.cacheReadTokens) + toNum(cm.usage.cacheCreationTokens);
       }
-      if (Array.isArray(cm.promptSections) && cm.promptSections.length > 0) {
-        latestSections = cm.promptSections;
-        break;
+      if (latestSections.length === 0 && Array.isArray(cm.promptSections) && cm.promptSections.length > 0) {
+        if (cm.promptSections.some((s) => extractSectionTokens(s) > 0)) {
+          latestSections = cm.promptSections;
+        }
       }
-      if (Array.isArray(cm.tokenBreakdownGroups) && cm.tokenBreakdownGroups.length > 0) {
-        latestGroups = cm.tokenBreakdownGroups;
-        break;
+      if (latestGroups.length === 0 && Array.isArray(cm.tokenBreakdownGroups) && cm.tokenBreakdownGroups.length > 0) {
+        if (cm.tokenBreakdownGroups.some((g) => toNum(g.numTokens ?? g.tokens ?? g.tokenCount) > 0)) {
+          latestGroups = cm.tokenBreakdownGroups;
+        }
       }
+      if (gmUsed > 0 && (latestSections.length > 0 || latestGroups.length > 0)) break;
     }
   }
 
@@ -115,7 +130,7 @@ export function computeContextBreakdown({
   if (latestSections.length > 0) {
     source = 'prompt_sections';
     for (const sec of latestSections) {
-      const tok = toNum(sec.numTokens ?? sec.tokens) || Math.round(toNum(sec.contentLen) / 4);
+      const tok = extractSectionTokens(sec);
       if (tok <= 0) continue;
       const cat = classifySection(sec.tokenType, sec.title);
       const b = buckets.get(cat);
@@ -126,7 +141,7 @@ export function computeContextBreakdown({
   } else if (latestGroups.length > 0) {
     source = 'token_breakdown';
     for (const grp of latestGroups) {
-      const tok = toNum(grp.numTokens ?? grp.tokens);
+      const tok = toNum(grp.numTokens ?? grp.tokens ?? grp.tokenCount);
       if (tok <= 0) continue;
       const cat = classifySection(grp.type, grp.name);
       const b = buckets.get(cat);
@@ -134,31 +149,40 @@ export function computeContextBreakdown({
       b.itemCount += 1;
       items.push({ title: String(grp.name || cat), category: cat, tokens: tok });
     }
-  } else if (Array.isArray(steps) && steps.length > 0) {
-    source = 'steps_estimated';
+  }
+
+  const preStepTotal = [...buckets.values()].reduce((s, b) => s + b.tokens, 0);
+  if (Array.isArray(steps) && steps.length > 0 && (preStepTotal === 0 || (targetUsed > 0 && preStepTotal < targetUsed * 0.9))) {
+    const remainingBudget = preStepTotal === 0 ? targetUsed : Math.max(0, targetUsed - preStepTotal);
+    const coveredCats = new Set([...buckets.values()].filter((b) => b.tokens > 0).map((b) => b.key));
     const rawItems = [];
     let rawSum = 0;
     for (let i = 0; i < steps.length; i++) {
       const st = steps[i];
       const { category, label } = classifyStep(st);
+      if (preStepTotal > 0 && coveredCats.has(category)) continue;
       const est = estimateCharsTokens(st);
       rawSum += est;
       rawItems.push({ title: `#${i} ${label}`, category, est });
     }
-    const scale = targetUsed > 0 && rawSum > 0 ? targetUsed / rawSum : 1;
-    for (const ri of rawItems) {
-      const tok = Math.max(1, Math.round(ri.est * scale));
-      const b = buckets.get(ri.category);
-      b.tokens += tok;
-      b.itemCount += 1;
-      items.push({ title: ri.title, category: ri.category, tokens: tok });
+    if (rawItems.length > 0 && rawSum > 0) {
+      if (source === 'none') source = 'steps_estimated';
+      const scale = remainingBudget > 0 ? remainingBudget / rawSum : 1;
+      for (const ri of rawItems) {
+        const tok = Math.max(1, Math.round(ri.est * scale));
+        const b = buckets.get(ri.category);
+        b.tokens += tok;
+        b.itemCount += 1;
+        items.push({ title: ri.title, category: ri.category, tokens: tok });
+      }
     }
   }
 
   const segTotal = [...buckets.values()].reduce((s, b) => s + b.tokens, 0);
-  if (targetUsed > segTotal && segTotal > 0) {
+  if (targetUsed > segTotal) {
     buckets.get('other').tokens += targetUsed - segTotal;
     buckets.get('other').itemCount += 1;
+    if (source === 'none') source = 'usage_fallback';
   }
 
   const totalUsed = Math.max(targetUsed, segTotal);

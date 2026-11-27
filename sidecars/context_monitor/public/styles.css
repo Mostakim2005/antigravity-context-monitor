@@ -37,6 +37,8 @@
 html, body {
   margin: 0;
   padding: 0;
+  width: 100%;
+  overflow-x: hidden;
   background: var(--cm-bg);
   color: var(--cm-fg);
   font-family: var(--cm-font);
@@ -50,6 +52,7 @@ html, body {
 }
 
 .shell {
+  width: 100%;
   max-width: 640px;
   margin: 0 auto;
   padding: 10px 10px 20px;
@@ -129,8 +132,14 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
+  min-width: 0;
+}
+
+.limit-bar > * {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .limit-label {
@@ -212,12 +221,14 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
 }
 
 .dashboard {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
 }
 
 .card {
@@ -225,6 +236,8 @@ html, body {
   border: 1px solid var(--cm-card-border);
   border-radius: 9px;
   padding: 10px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .empty-state {
@@ -401,8 +414,10 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 6px 8px;
   margin-bottom: 6px;
+  min-width: 0;
 }
 
 .section-title {
@@ -738,7 +753,10 @@ html, body {
 .limit-bar-right {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .sec-toggle-btn {
@@ -780,12 +798,13 @@ html, body {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 3px 7px;
+  padding: 2px 6px;
   border-radius: 999px;
   border: 1px solid var(--cm-border);
   background: var(--cm-muted);
   color: var(--cm-fg-muted);
-  font-size: 11px;
+  font-size: 10.5px;
+  max-width: 100%;
   cursor: pointer;
   user-select: none;
 }
@@ -907,15 +926,24 @@ html, body {
 .q-win-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 6px 8px;
 }
 
 .q-win-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 2px 4px;
   font-size: 11px;
   margin-bottom: 3px;
+}
+
+@media (max-width: 390px) {
+  .q-win-grid {
+    grid-template-columns: 1fr;
+    gap: 5px;
+  }
 }
 
 .q-win-tag {
@@ -961,14 +989,20 @@ html, body {
   margin-bottom: 8px;
 }
 
+.switcher-head {
+  margin-bottom: 5px;
+}
+
 .switcher-row {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
 }
 
 .cm-select {
   flex: 1;
+  width: 100%;
   min-width: 0;
   height: 26px;
   padding: 2px 6px;
@@ -987,7 +1021,9 @@ html, body {
 
 .cm-lock-btn {
   white-space: nowrap;
-  height: 26px;
+  flex-shrink: 0;
+  height: 24px;
+  padding: 2px 8px;
 }
 
 .switcher-note {
@@ -995,6 +1031,7 @@ html, body {
   font-size: 10.5px;
   color: var(--cm-warn);
   font-family: var(--cm-mono);
+  overflow-wrap: anywhere;
 }
 
 /* Scope & DSH Cost Card */
@@ -1003,18 +1040,24 @@ html, body {
 }
 
 .sc-pills {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
   flex-wrap: wrap;
+  margin-bottom: 7px;
 }
 
 .sc-hero {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 6px 8px;
   margin-bottom: 7px;
+}
+
+.sc-hero-left {
+  min-width: 0;
 }
 
 .sc-cost-main {
@@ -1029,6 +1072,7 @@ html, body {
   font-family: var(--cm-mono);
   font-size: 10.5px;
   color: var(--cm-fg-muted);
+  overflow-wrap: anywhere;
 }
 
 .sc-saved-pill {
@@ -1054,27 +1098,34 @@ html, body {
 
 .sc-row {
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 8px;
-  font-size: 11.5px;
+  gap: 6px;
+  font-size: 11px;
+  min-width: 0;
 }
 
 .sc-row-k {
   color: var(--cm-fg-muted);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sc-row-v {
   font-family: var(--cm-mono);
   color: var(--cm-fg);
+  white-space: nowrap;
 }
 
 .sc-row-usd {
   font-family: var(--cm-mono);
   font-weight: 600;
-  min-width: 54px;
+  min-width: 48px;
   text-align: right;
   color: var(--cm-fg);
+  white-space: nowrap;
 }
 
 .sc-toolbar {

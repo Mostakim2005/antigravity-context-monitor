@@ -3,16 +3,16 @@
 
   const SECTION_DEFS = [
     { key: 'switcher', en: 'Chat Switcher / Lock', zh: '会话切换 / 锁定主控', defaultOn: true },
-    { key: 'quotas', en: '5h / 7d Quotas', zh: '5h / 7d 额度', defaultOn: true },
-    { key: 'scopeCost', en: 'Scope & Cost', zh: '统计范围与费用', defaultOn: true },
-    { key: 'gauge', en: 'Context Gauge', zh: '上下文占用条', defaultOn: true },
-    { key: 'breakdown', en: 'Context Breakdown', zh: '上下文构成与 Top 5', defaultOn: true },
-    { key: 'tokenMetrics', en: 'Cache / Input / Out', zh: '缓存 / 新增 / 输出', defaultOn: true },
-    { key: 'speedMetrics', en: 'TTFT / TPS / Time', zh: '首字 / 速度 / 耗时', defaultOn: true },
+    { key: 'quotas', en: 'Model Quotas (5h & 7d)', zh: '模型额度（5h / 周额度）', defaultOn: true },
+    { key: 'scopeCost', en: 'Usage & Cost', zh: '用量与费用', defaultOn: true },
+    { key: 'gauge', en: 'Context Used', zh: '当前上下文占用', defaultOn: true },
+    { key: 'breakdown', en: 'Context Breakdown', zh: '上下文构成', defaultOn: true },
+    { key: 'tokenMetrics', en: 'Cache / Input / Output', zh: '缓存 / 输入 / 输出', defaultOn: true },
+    { key: 'speedMetrics', en: 'TTFT / Speed / Duration', zh: '首字 / 速度 / 耗时', defaultOn: true },
     { key: 'totals', en: 'Session Totals', zh: '本会话累计', defaultOn: true },
-    { key: 'chart', en: 'Growth Chart', zh: '增长趋势图', defaultOn: true },
+    { key: 'chart', en: 'Context Growth', zh: '上下文增长趋势', defaultOn: true },
     { key: 'turns', en: 'Prompt Turns', zh: 'Prompt 轮次', defaultOn: true },
-    { key: 'heatmap', en: 'Heatmap Tab', zh: '历史热力图页', defaultOn: true },
+    { key: 'heatmap', en: 'Heatmap', zh: '历史热力图', defaultOn: true },
   ];
 
   function loadPrefs() {

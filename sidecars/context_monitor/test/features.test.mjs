@@ -101,6 +101,30 @@ test('breakdown maps promptSections into 9 categories and falls back to steps es
   });
   assert.equal(estimated.source, 'steps_estimated');
   assert.ok(estimated.segments.length >= 2);
+
+  // Zero-token promptSections must fall through cleanly to steps / usage_fallback
+  const zeroSectionsWithSteps = computeContextBreakdown({
+    generatorMetadata: [
+      { chatModel: { promptSections: [{ title: 'System', tokenType: 'SYSTEM_PROMPT', numTokens: 0 }] } },
+    ],
+    steps: [
+      { type: 'CORTEX_STEP_TYPE_USER_INPUT', userInput: { items: [{ text: 'Explain layout bug' }] } },
+      { type: 'CORTEX_STEP_TYPE_PLANNER_RESPONSE', plannerResponse: { response: 'Root cause found' } },
+    ],
+    usedTokens: 285000,
+    limitTokens: 512000,
+  });
+  assert.equal(zeroSectionsWithSteps.source, 'steps_estimated');
+  assert.ok(zeroSectionsWithSteps.segments.length >= 2);
+
+  const usageFallbackOnly = computeContextBreakdown({
+    generatorMetadata: [],
+    steps: [],
+    usedTokens: 50000,
+    limitTokens: 512000,
+  });
+  assert.equal(usageFallbackOnly.source, 'usage_fallback');
+  assert.equal(usageFallbackOnly.segments[0].tokens, 50000);
 });
 
 test('extractAICredits parses numeric and string credits safely', () => {

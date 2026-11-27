@@ -18,6 +18,7 @@ import {
   safeStat,
 } from './lib.mjs';
 import { parseQuotaSummary, parseUserStatusQuotaFallback, extractAICredits } from './quotas.mjs';
+import { extractActiveAccountSnapshot, readLegacyMonitorSeed } from './accounts.mjs';
 import { computeContextBreakdown } from './breakdown.mjs';
 import { calculateScopeCosts, getCatalogPricingList } from './pricing.mjs';
 import {
@@ -25,14 +26,18 @@ import {
   exportMonthArchive,
   getCustomPricingMap,
   importMonthArchive,
+  listAccountSnapshots,
   listMonthsInDb,
   openContextDb,
   queryScopeRows,
   recordQuotaSamplesAndComputeRunway,
+  removeAccountSnapshot,
   resolveDbPath,
   saveCustomPricingEntry,
   scanTranscriptIncremental,
+  seedAccountsFromLegacyOnce,
   syncBrainIncremental,
+  upsertActiveAccountSnapshot,
 } from './db.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -43,6 +48,7 @@ const STATIC = {
   '/i18n.js': ['i18n.js', 'application/javascript; charset=utf-8'],
   '/quotas.js': ['quotas.js', 'application/javascript; charset=utf-8'],
   '/sections.js': ['sections.js', 'application/javascript; charset=utf-8'],
+  '/accounts.js': ['accounts.js', 'application/javascript; charset=utf-8'],
   '/extras.js': ['extras.js', 'application/javascript; charset=utf-8'],
   '/app.js': ['app.js', 'application/javascript; charset=utf-8'],
 };
@@ -59,13 +65,40 @@ const SCOPE_SYNC_TTL_MS = 5_000;
 let quotaCache = { fetchedAt: 0, payload: null };
 let trajCache = { fetchedAt: 0, list: [], byId: new Map() };
 let lastBrainSyncAt = 0;
+let currentAccountEmail = '';
+let legacySeedChecked = false;
 let dbInstance = null;
 
 function getDb() {
   if (!dbInstance) {
     dbInstance = openContextDb(resolveDbPath());
   }
+  if (!legacySeedChecked) {
+    legacySeedChecked = true;
+    try {
+      const done = dbInstance.prepare("SELECT 1 FROM kv WHERE k = 'legacy_accounts_imported_ms'").get();
+      if (!done) {
+        const legacy = readLegacyMonitorSeed();
+        if (legacy) seedAccountsFromLegacyOnce(dbInstance, legacy, Date.now());
+      }
+    } catch {
+      // Ignore optional legacy state migration failures
+    }
+  }
   return dbInstance;
+}
+
+function syncAccountFromUserStatus(statusRaw, now = Date.now()) {
+  if (!statusRaw) return '';
+  try {
+    const snap = extractActiveAccountSnapshot(statusRaw, now);
+    if (!snap) return '';
+    currentAccountEmail = snap.email;
+    upsertActiveAccountSnapshot(getDb(), snap, now);
+    return snap.email;
+  } catch {
+    return '';
+  }
 }
 
 function callLsRpc(method, payloadObj, timeoutMs = 1500) {
@@ -153,6 +186,7 @@ async function getQuotasSnapshot(force = false) {
     callLsRpc('RetrieveUserQuotaSummary', meta, 3000),
     callLsRpc('GetUserStatus', meta, 3000),
   ]);
+  syncAccountFromUserStatus(statusRaw, now);
   let parsed = parseQuotaSummary(summaryRaw, now);
   if (!parsed && statusRaw) {
     parsed = parseUserStatusQuotaFallback(statusRaw, now);
@@ -204,6 +238,16 @@ async function getSummary(convId) {
   }
   if (transcriptCache.size > 64) transcriptCache.clear();
   transcriptCache.set(loc.path, { mtimeMs: st.mtimeMs, size: st.size, summary });
+  try {
+    scanTranscriptIncremental(getDb(), {
+      convId,
+      transcriptPath: loc.path,
+      appSource: loc.source || '',
+      activeAccountEmail: currentAccountEmail,
+    });
+  } catch {
+    // Non-critical live incremental DB attribution
+  }
   return { summary, etag: `${convId}|${st.mtimeMs}|${st.size}` };
 }
 
@@ -581,6 +625,24 @@ async function getBreakdownSnapshot(convId) {
   return payload;
 }
 
+async function ensureActiveAccountEmail() {
+  if (currentAccountEmail) return currentAccountEmail;
+  await getQuotasSnapshot(false);
+  return currentAccountEmail;
+}
+
+async function getAccountsSnapshot(force = false) {
+  const now = Date.now();
+  if (force || !currentAccountEmail || !quotaCache.payload || now - quotaCache.fetchedAt >= QUOTA_TTL_MS) {
+    await getQuotasSnapshot(force);
+  }
+  const db = getDb();
+  return {
+    updatedAt: new Date(now).toISOString(),
+    ...listAccountSnapshots(db),
+  };
+}
+
 async function getScopeSnapshot(data) {
   const scope = String(data.scope || 'conversation').trim();
   const convId = String(data.conversationId || app.config.conversationId || '').trim();
@@ -588,6 +650,7 @@ async function getScopeSnapshot(data) {
   const force = data.force === '1' || data.force === 'true';
 
   const db = getDb();
+  const activeAccountEmail = await ensureActiveAccountEmail();
   const trajs = await fetchTrajectoriesCached(false);
   const workspaceByConv = new Map();
   for (const t of trajs.list) {
@@ -608,13 +671,14 @@ async function getScopeSnapshot(data) {
         appSource: loc.source || '',
         workspaceUri: wsMeta?.workspaceUri || workspaceUris[0] || '',
         title,
+        activeAccountEmail,
       });
     }
   }
 
   const now = Date.now();
   if (scope !== 'conversation' && (force || now - lastBrainSyncAt > SCOPE_SYNC_TTL_MS)) {
-    syncBrainIncremental(db, { workspaceByConv });
+    syncBrainIncremental(db, { workspaceByConv, activeAccountEmail });
     lastBrainSyncAt = now;
   }
 
@@ -654,6 +718,22 @@ app.api(
 );
 
 app.api('/api/scope', (data) => getScopeSnapshot(data), 'GET');
+
+app.api(
+  '/api/accounts',
+  (data) => getAccountsSnapshot(data.force === '1' || data.force === 'true'),
+  'GET',
+);
+
+app.api(
+  '/api/accounts/remove',
+  (data) => {
+    const db = getDb();
+    const removed = removeAccountSnapshot(db, data.email);
+    return { ok: removed, ...listAccountSnapshots(db) };
+  },
+  'POST',
+);
 
 app.api(
   '/api/pricing',

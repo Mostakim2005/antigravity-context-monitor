@@ -7,8 +7,10 @@
   * `sidecars/context_monitor/main.mjs :: getConversationsSnapshot` — `GetAllCascadeTrajectories` subagent/main detection and switcher feed.
   * `sidecars/context_monitor/main.mjs :: getBreakdownSnapshot` — `GetCascadeTrajectoryGeneratorMetadata` + `GetCascadeTrajectorySteps` -> `computeContextBreakdown`.
   * `sidecars/context_monitor/main.mjs :: getScopeSnapshot` — Incremental sync + `queryScopeRows` + `calculateScopeCosts`.
+  * `sidecars/context_monitor/main.mjs :: getAccountsSnapshot` — Multi-account quota snapshot + cumulative token attribution (`/api/accounts`).
   * `sidecars/context_monitor/main.mjs :: getQuotasSnapshot` — `RetrieveUserQuotaSummary` + `GetUserStatus` + `extractAICredits` + `recordQuotaSamplesAndComputeRunway`.
-  * `sidecars/context_monitor/db.mjs :: scanTranscriptIncremental` — Byte-offset `transcript.jsonl` incremental reader with truncation recovery and frozen-month skip (`archived = 1`).
+  * `sidecars/context_monitor/accounts.mjs :: extractActiveAccountSnapshot` — Extracts signed-in account metadata, pool reset timers, and one-time legacy seed.
+  * `sidecars/context_monitor/db.mjs :: scanTranscriptIncremental` — Byte-offset `transcript.jsonl` incremental reader with truncation recovery, account token attribution, and frozen-month skip (`archived = 1`).
   * `sidecars/context_monitor/db.mjs :: exportMonthArchive` — Exports portable monthly JSON bundle and freezes historical conversations.
   * `sidecars/context_monitor/pricing.mjs :: calculateScopeCosts` — Published API rate attribution + user custom overrides.
   * `sidecars/context_monitor/breakdown.mjs :: computeContextBreakdown` — 9-category prompt context classification + Top 5 consumer extraction.

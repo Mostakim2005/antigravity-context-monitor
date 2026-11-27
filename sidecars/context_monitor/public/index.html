@@ -18,7 +18,12 @@
             <span id="live-text">Live</span>
           </span>
         </div>
-        <span id="conv-badge" class="conv-badge" title="当前会话 ID">—</span>
+        <div class="header-actions">
+          <button type="button" id="cm-accounts-pill" class="acct-header-pill" title="Accounts">
+            <span class="acct-pill-dot"></span><span>Accounts</span>
+          </button>
+          <span id="conv-badge" class="conv-badge" title="当前会话 ID">—</span>
+        </div>
       </div>
 
       <div id="repo-line" class="repo-line hidden"></div>
@@ -26,6 +31,8 @@
       <div class="limit-bar" aria-label="视图与压缩阈值">
         <div class="tab-group" role="tablist">
           <button type="button" id="tab-session" class="tab-btn active" role="tab" aria-selected="true">当前会话</button>
+          <button type="button" id="tab-cost" class="tab-btn" role="tab" aria-selected="false">费用</button>
+          <button type="button" id="tab-accounts" class="tab-btn" role="tab" aria-selected="false">多账号</button>
           <button type="button" id="tab-heatmap" class="tab-btn" role="tab" aria-selected="false">历史热力图</button>
         </div>
         <span id="limit-badge" class="preset-btn active" title="当前上下文窗口上限（来自 LanguageServerService，默认 512K）">512K · 512,000</span>
@@ -150,6 +157,8 @@
       </div>
       </div>
 
+      <section id="view-cost" class="cost-view hidden"></section>
+      <section id="view-accounts" class="accounts-view hidden"></section>
       <section id="view-heatmap" class="heatmap-view hidden">
         <div class="metrics-grid">
           <div class="card metric-card">
@@ -195,10 +204,11 @@
     </main>
   </div>
 
-  <script src="/i18n.js?v=2"></script>
-  <script src="/sections.js?v=3"></script>
+  <script src="/i18n.js?v=3"></script>
+  <script src="/sections.js?v=4"></script>
   <script src="/quotas.js?v=2"></script>
-  <script src="/extras.js?v=2"></script>
+  <script src="/accounts.js?v=1"></script>
+  <script src="/extras.js?v=3"></script>
   <script src="/app.js?v=6"></script>
 </body>
 </html>

@@ -1350,3 +1350,341 @@ html, body {
     grid-template-columns: 1fr;
   }
 }
+
+/* Header Actions & Compact Accounts Pill */
+.header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.acct-header-pill {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--cm-border);
+  background: var(--cm-muted);
+  color: var(--cm-fg);
+  font-family: var(--cm-font);
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.acct-header-pill:hover {
+  background: var(--cm-hover);
+}
+
+.acct-header-pill.active {
+  background: color-mix(in srgb, var(--cm-primary) 16%, var(--cm-card));
+  border-color: color-mix(in srgb, var(--cm-primary) 42%, var(--cm-border));
+}
+
+.acct-pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--cm-fg-muted);
+  flex-shrink: 0;
+}
+
+.acct-pill-dot.is-live {
+  background: var(--cm-cache);
+}
+
+.acct-pill-meta {
+  color: var(--cm-fg-muted);
+  font-family: var(--cm-mono);
+  font-weight: 500;
+}
+
+/* Tab Bar Wrapping for 4 Tabs */
+.tab-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+
+/* Multi-Account Tab (#view-accounts) */
+.accounts-view,
+.cost-view {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.acct-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.acct-kpi {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 8px;
+  border-radius: 7px;
+  background: var(--cm-muted);
+  border: 1px solid var(--cm-border);
+  min-width: 0;
+}
+
+.acct-kpi-k {
+  font-size: 10px;
+  color: var(--cm-fg-muted);
+}
+
+.acct-kpi-v {
+  font-family: var(--cm-mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--cm-fg);
+  margin-top: 1px;
+}
+
+.acct-card.is-active {
+  border-color: color-mix(in srgb, var(--cm-cache) 45%, var(--cm-card-border));
+}
+
+.acct-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  margin-bottom: 7px;
+}
+
+.acct-id-block {
+  min-width: 0;
+  flex: 1 1 160px;
+}
+
+.acct-name-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.acct-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--cm-fg-muted);
+  flex-shrink: 0;
+}
+
+.acct-dot.is-active {
+  background: var(--cm-cache);
+}
+
+.acct-name {
+  font-size: 12.5px;
+  color: var(--cm-fg);
+}
+
+.acct-state-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--cm-muted);
+  color: var(--cm-fg-muted);
+}
+
+.acct-state-badge.is-active {
+  background: color-mix(in srgb, var(--cm-cache) 15%, var(--cm-card));
+  color: var(--cm-cache);
+}
+
+.acct-email {
+  margin-top: 2px;
+  font-family: var(--cm-mono);
+  font-size: 10.5px;
+  color: var(--cm-fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.acct-actions-col {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.acct-tier-pill {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--cm-primary) 14%, var(--cm-card));
+  border: 1px solid color-mix(in srgb, var(--cm-primary) 34%, transparent);
+  color: var(--cm-fg);
+  white-space: nowrap;
+}
+
+.acct-remove-btn {
+  appearance: none;
+  border: 1px solid color-mix(in srgb, var(--cm-danger) 40%, var(--cm-border));
+  background: color-mix(in srgb, var(--cm-danger) 10%, var(--cm-card));
+  color: var(--cm-danger);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.acct-usage-box {
+  padding: 6px 8px;
+  border-radius: 7px;
+  background: var(--cm-muted);
+  border: 1px solid var(--cm-border);
+  margin-bottom: 7px;
+}
+
+.acct-usage-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.acct-usage-label {
+  font-size: 11px;
+  color: var(--cm-fg-muted);
+  font-weight: 600;
+}
+
+.acct-usage-tok {
+  font-family: var(--cm-mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--cm-fg);
+}
+
+.acct-usage-sub {
+  margin-top: 2px;
+  font-family: var(--cm-mono);
+  font-size: 10px;
+  color: var(--cm-fg-muted);
+  overflow-wrap: anywhere;
+}
+
+.acct-credits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.acct-pools {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-top: 6px;
+  border-top: 1px solid var(--cm-border);
+}
+
+.acct-pool-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+.acct-model-chips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 3px;
+  min-width: 0;
+  flex: 1 1 160px;
+}
+
+.acct-model-chip,
+.acct-model-more {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--cm-muted);
+  border: 1px solid var(--cm-border);
+  color: var(--cm-fg-muted);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.acct-model-more {
+  font-family: var(--cm-mono);
+  font-weight: 600;
+  color: var(--cm-fg);
+}
+
+.acct-quota-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--cm-mono);
+  font-size: 10.5px;
+  flex-shrink: 0;
+}
+
+.acct-cd {
+  color: var(--cm-fg-muted);
+}
+
+.acct-qbar {
+  width: 44px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--cm-track);
+  overflow: hidden;
+}
+
+.acct-qfill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--cm-cache);
+}
+
+.acct-qfill.is-warn { background: var(--cm-warn); }
+.acct-qfill.is-danger { background: var(--cm-danger); }
+
+.acct-qpct {
+  font-weight: 600;
+  color: var(--cm-fg);
+}
+.acct-qpct.is-warn { color: var(--cm-warn); }
+.acct-qpct.is-danger { color: var(--cm-danger); }
+
+.acct-status-tag {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+
+.acct-status-tag.is-ready {
+  background: color-mix(in srgb, var(--cm-cache) 15%, var(--cm-card));
+  color: var(--cm-cache);
+}
+
+.acct-status-tag.is-idle {
+  background: var(--cm-muted);
+  color: var(--cm-fg-muted);
+}

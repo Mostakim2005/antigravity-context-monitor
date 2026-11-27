@@ -11,6 +11,7 @@ import {
 } from '../pricing.mjs';
 import { computeContextBreakdown } from '../breakdown.mjs';
 import { extractAICredits } from '../quotas.mjs';
+import { extractActiveAccountSnapshot, readLegacyMonitorSeed } from '../accounts.mjs';
 import {
   openContextDb,
   scanTranscriptIncremental,
@@ -22,6 +23,10 @@ import {
   saveCustomPricingEntry,
   getCustomPricingMap,
   deleteCustomPricingEntry,
+  seedAccountsFromLegacyOnce,
+  upsertActiveAccountSnapshot,
+  listAccountSnapshots,
+  removeAccountSnapshot,
 } from '../db.mjs';
 
 test('pricing normalizes placeholders, calculates scope totals, and honors overrides', () => {
@@ -323,4 +328,91 @@ test('db incremental scanning, scope queries, monthly freeze/archive import, quo
   assert.equal(getCustomPricingMap(db)['my-local-model'].input, 0.25);
   deleteCustomPricingEntry(db, 'my-local-model');
   assert.equal(getCustomPricingMap(db)['my-local-model'], undefined);
+});
+
+test('multi-account extractor, legacy seed once, post-cutoff live token attribution, and remove behavior', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'cm-acct-test-'));
+  const db = openContextDb(join(dir, 'accts.db'));
+  t.after(() => {
+    try { db.close(); } catch { /* ignore */ }
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // Extract live account snapshot from GetUserStatus shape
+  const rawStatus = {
+    userStatus: {
+      name: 'Parvin Akter',
+      email: 'parvin@example.com',
+      planStatus: { planInfo: { planName: 'Pro' } },
+      userTier: {
+        name: 'Google AI Pro',
+        availableCredits: [{ creditType: 'CREDIT_TYPE_PROMPT_CREDITS', creditAmount: '900' }],
+      },
+      cascadeModelConfigData: {
+        clientModelConfigs: [
+          { label: 'Gemini 4 Hydrogen (High)', quotaInfo: { remainingFraction: 0.72, resetTime: '2026-11-28T00:00:00Z' } },
+          { label: 'Claude Opus 4.6', quotaInfo: { remainingFraction: 1.0, resetTime: '1970-01-01T00:00:00Z' } },
+        ],
+      },
+    },
+  };
+  const snap = extractActiveAccountSnapshot(rawStatus, Date.parse('2026-11-27T12:00:00Z'));
+  assert.equal(snap.email, 'parvin@example.com');
+  assert.equal(snap.resetPools.length, 2);
+  assert.equal(snap.credits[0].amount, 900);
+
+  // Seed legacy state-v1.json once (active + settled ledger + cached account)
+  const legacyPath = join(dir, 'state-v1.json');
+  writeFileSync(legacyPath, JSON.stringify({
+    global: {
+      accountSnapshots: [
+        { email: 'parvin@example.com', name: 'Parvin Akter', tierName: 'Google AI Pro', isActive: true },
+        { email: 'mostakim@example.com', name: 'Mostakim Kazi', tierName: 'Google AI Pro', isActive: false },
+      ],
+      dailyLedgerState: {
+        accounts: {
+          'parvin@example.com': { totalCalls: 10, totalInputTokens: 1000, totalCacheRead: 9000, totalOutputTokens: 500, totalEstimatedCost: 0.25 },
+        },
+        settled: [
+          { accountEmail: 'mostakim@example.com', totalCalls: 50, totalInputTokens: 5000, totalCacheRead: 40000, totalOutputTokens: 2000, totalEstimatedCost: 1.2 },
+        ],
+      },
+    },
+  }));
+
+  const legacy = readLegacyMonitorSeed(legacyPath);
+  const tCutoff = Date.parse('2026-11-27T12:00:00Z');
+  assert.equal(seedAccountsFromLegacyOnce(db, legacy, tCutoff), true);
+  assert.equal(seedAccountsFromLegacyOnce(db, legacy, tCutoff + 5000), false); // never imports twice
+
+  upsertActiveAccountSnapshot(db, snap, tCutoff);
+
+  // Pre-cutoff call MUST NOT double-count against legacy seed; post-cutoff call MUST increment live tokens
+  const tp = join(dir, 'chat.jsonl');
+  writeFileSync(tp, [
+    JSON.stringify({ type: 'PLANNER_RESPONSE', step_index: 1, created_at: '2026-11-27T11:55:00Z', model: 'gemini-4-hydrogen', input_tokens: 500, cache_read_tokens: 1000, output_tokens: 50 }),
+    JSON.stringify({ type: 'PLANNER_RESPONSE', step_index: 2, created_at: '2026-11-27T12:05:00Z', model: 'gemini-4-hydrogen', input_tokens: 200, cache_read_tokens: 800, output_tokens: 100 }),
+  ].join('\n') + '\n');
+
+  scanTranscriptIncremental(db, {
+    convId: '44444444-4444-4444-8444-444444444444',
+    transcriptPath: tp,
+    activeAccountEmail: 'parvin@example.com',
+  });
+
+  const list = listAccountSnapshots(db);
+  assert.equal(list.accounts.length, 2);
+  const parvin = list.accounts.find((a) => a.email === 'parvin@example.com');
+  const mostakim = list.accounts.find((a) => a.email === 'mostakim@example.com');
+  assert.equal(parvin.isActive, true);
+  // 10,500 seed + 1,100 post-cutoff live (pre-cutoff 1,550 skipped) = 11,600
+  assert.equal(parvin.usage.totalTokens, 11_600);
+  assert.equal(parvin.usage.calls, 11);
+  assert.equal(mostakim.usage.totalTokens, 47_000);
+  assert.equal(list.summary.totalTokens, 58_600);
+
+  // Cannot remove active account, CAN remove cached account
+  assert.equal(removeAccountSnapshot(db, 'parvin@example.com'), false);
+  assert.equal(removeAccountSnapshot(db, 'mostakim@example.com'), true);
+  assert.equal(listAccountSnapshots(db).accounts.length, 1);
 });

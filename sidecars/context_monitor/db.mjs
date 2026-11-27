@@ -2,6 +2,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readSync, stat
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { ID_RE, findAllBrainDirs } from './lib.mjs';
+import { calculateScopeCosts } from './pricing.mjs';
 
 function toLocalDateKey(isoStr) {
   const d = new Date(isoStr);
@@ -81,11 +82,43 @@ export function openContextDb(dbPath = resolveDbPath()) {
       cache_read REAL NOT NULL DEFAULT 0,
       cache_write REAL NOT NULL DEFAULT 0
     );
+    CREATE TABLE IF NOT EXISTS accounts (
+      email TEXT PRIMARY KEY,
+      name TEXT NOT NULL DEFAULT '',
+      plan_name TEXT NOT NULL DEFAULT '',
+      tier_name TEXT NOT NULL DEFAULT '',
+      is_active INTEGER NOT NULL DEFAULT 0,
+      last_seen_ms INTEGER NOT NULL DEFAULT 0,
+      pools_json TEXT NOT NULL DEFAULT '[]',
+      credits_json TEXT NOT NULL DEFAULT '[]',
+      seed_calls INTEGER NOT NULL DEFAULT 0,
+      seed_input_tokens INTEGER NOT NULL DEFAULT 0,
+      seed_cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+      seed_cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+      seed_output_tokens INTEGER NOT NULL DEFAULT 0,
+      seed_cost_usd REAL NOT NULL DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS account_daily (
+      email TEXT NOT NULL,
+      date_key TEXT NOT NULL,
+      model TEXT NOT NULL,
+      calls INTEGER NOT NULL DEFAULT 0,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (email, date_key, model)
+    );
     CREATE TABLE IF NOT EXISTS kv (
       k TEXT PRIMARY KEY,
       v TEXT NOT NULL
     );
   `);
+
+  const convCols = db.prepare('PRAGMA table_info(conversations)').all();
+  if (!convCols.some((c) => c.name === 'account_email')) {
+    db.exec("ALTER TABLE conversations ADD COLUMN account_email TEXT NOT NULL DEFAULT ''");
+  }
   return db;
 }
 
@@ -118,6 +151,7 @@ export function scanTranscriptIncremental(db, {
   appSource = '',
   workspaceUri = '',
   title = '',
+  activeAccountEmail = '',
 } = {}) {
   if (!convId || !transcriptPath || !existsSync(transcriptPath)) {
     return { scanned: false, addedCalls: 0 };
@@ -151,11 +185,16 @@ export function scanTranscriptIncremental(db, {
     resetNeeded = true;
   }
 
+  const cutoffRow = db.prepare("SELECT v FROM kv WHERE k = 'legacy_accounts_imported_ms'").get();
+  const legacyCutoffMs = cutoffRow ? Number(cutoffRow.v) || 0 : 0;
+
   const { text, nextOffset } = readSliceUtf8(transcriptPath, offset, st.size - offset);
   const deltas = new Map();
+  const acctDeltas = new Map();
   let maxStep = lastStep;
   let latestMonth = prev?.month_key || '';
   let addedCalls = 0;
+  const resolvedAcct = String(activeAccountEmail || prev?.account_email || '').trim();
 
   if (text) {
     for (const rawLine of text.split('\n')) {
@@ -184,13 +223,35 @@ export function scanTranscriptIncremental(db, {
         b = { dateKey, monthKey, model, calls: 0, input: 0, cacheRead: 0, cacheWrite: 0, output: 0, thinking: 0 };
         deltas.set(key, b);
       }
+      const inTok = toInt(obj.input_tokens);
+      const crTok = toInt(obj.cache_read_tokens);
+      const cwTok = toInt(obj.cache_creation_tokens);
+      const outTok = toInt(obj.output_tokens);
+      const thTok = toInt(obj.thinking_tokens);
+
       b.calls += 1;
-      b.input += toInt(obj.input_tokens);
-      b.cacheRead += toInt(obj.cache_read_tokens);
-      b.cacheWrite += toInt(obj.cache_creation_tokens);
-      b.output += toInt(obj.output_tokens);
-      b.thinking += toInt(obj.thinking_tokens);
+      b.input += inTok;
+      b.cacheRead += crTok;
+      b.cacheWrite += cwTok;
+      b.output += outTok;
+      b.thinking += thTok;
       addedCalls += 1;
+
+      if (resolvedAcct) {
+        const callTsMs = obj.created_at ? Date.parse(obj.created_at) : Math.round(st.mtimeMs);
+        if (!legacyCutoffMs || (Number.isFinite(callTsMs) && callTsMs > legacyCutoffMs)) {
+          let ab = acctDeltas.get(key);
+          if (!ab) {
+            ab = { dateKey, model, calls: 0, input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
+            acctDeltas.set(key, ab);
+          }
+          ab.calls += 1;
+          ab.input += inTok;
+          ab.cacheRead += crTok;
+          ab.cacheWrite += cwTok;
+          ab.output += outTok;
+        }
+      }
     }
   }
 
@@ -218,9 +279,26 @@ export function scanTranscriptIncremental(db, {
     for (const b of deltas.values()) {
       upsertDaily.run(convId, b.dateKey, b.monthKey, b.model, b.calls, b.input, b.cacheRead, b.cacheWrite, b.output, b.thinking);
     }
+
+    if (resolvedAcct && acctDeltas.size > 0) {
+      const upsertAcctDaily = db.prepare(`
+        INSERT INTO account_daily (email, date_key, model, calls, input_tokens, cache_read_tokens, cache_write_tokens, output_tokens)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(email, date_key, model) DO UPDATE SET
+          calls = calls + excluded.calls,
+          input_tokens = input_tokens + excluded.input_tokens,
+          cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens,
+          cache_write_tokens = cache_write_tokens + excluded.cache_write_tokens,
+          output_tokens = output_tokens + excluded.output_tokens
+      `);
+      for (const ab of acctDeltas.values()) {
+        upsertAcctDaily.run(resolvedAcct, ab.dateKey, ab.model, ab.calls, ab.input, ab.cacheRead, ab.cacheWrite, ab.output);
+      }
+    }
+
     db.prepare(`
-      INSERT INTO conversations (conv_id, app_source, transcript_path, title, workspace_uri, mtime_ms, file_size, byte_offset, last_step_index, month_key, archived, updated_at_ms)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO conversations (conv_id, app_source, transcript_path, title, workspace_uri, mtime_ms, file_size, byte_offset, last_step_index, month_key, archived, updated_at_ms, account_email)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(conv_id) DO UPDATE SET
         app_source = COALESCE(NULLIF(excluded.app_source, ''), app_source),
         transcript_path = excluded.transcript_path,
@@ -232,7 +310,8 @@ export function scanTranscriptIncremental(db, {
         last_step_index = excluded.last_step_index,
         month_key = COALESCE(NULLIF(excluded.month_key, ''), month_key),
         archived = CASE WHEN excluded.archived = 1 THEN 1 ELSE archived END,
-        updated_at_ms = excluded.updated_at_ms
+        updated_at_ms = excluded.updated_at_ms,
+        account_email = COALESCE(NULLIF(account_email, ''), excluded.account_email)
     `).run(
       convId,
       appSource,
@@ -246,6 +325,7 @@ export function scanTranscriptIncremental(db, {
       latestMonth,
       isArchivedMonth ? 1 : 0,
       Date.now(),
+      resolvedAcct,
     );
     db.exec('COMMIT');
   } catch (err) {
@@ -260,6 +340,7 @@ export function syncBrainIncremental(db, {
   env = process.env,
   onlyConvIds = null,
   workspaceByConv = null,
+  activeAccountEmail = '',
 } = {}) {
   const brainDirs = findAllBrainDirs(env);
   let scannedFiles = 0;
@@ -285,6 +366,7 @@ export function syncBrainIncremental(db, {
         appSource,
         workspaceUri: wsMeta?.workspaceUri || '',
         title: wsMeta?.title || '',
+        activeAccountEmail,
       });
       if (res.scanned) scannedFiles += 1;
       totalAddedCalls += res.addedCalls || 0;
@@ -548,5 +630,193 @@ export function deleteCustomPricingEntry(db, modelKey) {
     db.prepare('DELETE FROM custom_pricing').run();
   } else {
     db.prepare('DELETE FROM custom_pricing WHERE model_key = ?').run(modelKey);
+  }
+}
+
+export function seedAccountsFromLegacyOnce(db, legacySeed, cutoffMs = Date.now()) {
+  const existingFlag = db.prepare("SELECT v FROM kv WHERE k = 'legacy_accounts_imported_ms'").get();
+  if (existingFlag) return false;
+  if (!legacySeed || !Array.isArray(legacySeed.accounts) || legacySeed.accounts.length === 0) {
+    return false;
+  }
+
+  db.exec('BEGIN');
+  try {
+    const stmt = db.prepare(`
+      INSERT INTO accounts (
+        email, name, plan_name, tier_name, is_active, last_seen_ms,
+        pools_json, credits_json, seed_calls, seed_input_tokens,
+        seed_cache_read_tokens, seed_cache_write_tokens, seed_output_tokens, seed_cost_usd
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(email) DO UPDATE SET
+        name = COALESCE(NULLIF(excluded.name, ''), name),
+        plan_name = COALESCE(NULLIF(excluded.plan_name, ''), plan_name),
+        tier_name = COALESCE(NULLIF(excluded.tier_name, ''), tier_name),
+        pools_json = CASE WHEN pools_json = '[]' THEN excluded.pools_json ELSE pools_json END,
+        credits_json = CASE WHEN credits_json = '[]' THEN excluded.credits_json ELSE credits_json END,
+        seed_calls = MAX(seed_calls, excluded.seed_calls),
+        seed_input_tokens = MAX(seed_input_tokens, excluded.seed_input_tokens),
+        seed_cache_read_tokens = MAX(seed_cache_read_tokens, excluded.seed_cache_read_tokens),
+        seed_cache_write_tokens = MAX(seed_cache_write_tokens, excluded.seed_cache_write_tokens),
+        seed_output_tokens = MAX(seed_output_tokens, excluded.seed_output_tokens),
+        seed_cost_usd = MAX(seed_cost_usd, excluded.seed_cost_usd)
+    `);
+    for (const a of legacySeed.accounts) {
+      const seed = a.seed || {};
+      stmt.run(
+        a.email,
+        a.name || a.email,
+        a.planName || '',
+        a.tierName || '',
+        a.isActive ? 1 : 0,
+        toInt(a.lastSeenMs) || cutoffMs,
+        JSON.stringify(a.resetPools || []),
+        JSON.stringify(a.credits || []),
+        toInt(seed.calls),
+        toInt(seed.inputTokens),
+        toInt(seed.cacheReadTokens),
+        toInt(seed.cacheWriteTokens),
+        toInt(seed.outputTokens),
+        Number(seed.costUsd) || 0,
+      );
+    }
+    db.prepare("INSERT OR REPLACE INTO kv (k, v) VALUES ('legacy_accounts_imported_ms', ?)").run(String(cutoffMs));
+    db.exec('COMMIT');
+    return true;
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+export function upsertActiveAccountSnapshot(db, snap, nowMs = Date.now()) {
+  if (!snap || !snap.email) return;
+  db.exec('BEGIN');
+  try {
+    db.prepare('UPDATE accounts SET is_active = 0 WHERE email != ? AND is_active = 1').run(snap.email);
+    db.prepare(`
+      INSERT INTO accounts (
+        email, name, plan_name, tier_name, is_active, last_seen_ms, pools_json, credits_json
+      )
+      VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+      ON CONFLICT(email) DO UPDATE SET
+        name = COALESCE(NULLIF(excluded.name, ''), name),
+        plan_name = COALESCE(NULLIF(excluded.plan_name, ''), plan_name),
+        tier_name = COALESCE(NULLIF(excluded.tier_name, ''), tier_name),
+        is_active = 1,
+        last_seen_ms = excluded.last_seen_ms,
+        pools_json = excluded.pools_json,
+        credits_json = excluded.credits_json
+    `).run(
+      snap.email,
+      snap.name || snap.email,
+      snap.planName || '',
+      snap.tierName || '',
+      toInt(snap.lastSeenMs) || nowMs,
+      JSON.stringify(snap.resetPools || []),
+      JSON.stringify(snap.credits || []),
+    );
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+export function listAccountSnapshots(db) {
+  const acctRows = db.prepare('SELECT * FROM accounts ORDER BY is_active DESC, last_seen_ms DESC').all();
+  const dailyRows = db.prepare('SELECT email, date_key, model, calls, input_tokens, cache_read_tokens, cache_write_tokens, output_tokens FROM account_daily').all();
+  const customPricing = getCustomPricingMap(db);
+
+  const byEmailRows = new Map();
+  for (const r of dailyRows) {
+    let arr = byEmailRows.get(r.email);
+    if (!arr) {
+      arr = [];
+      byEmailRows.set(r.email, arr);
+    }
+    arr.push({
+      dateKey: r.date_key,
+      model: r.model,
+      calls: toInt(r.calls),
+      inputTokens: toInt(r.input_tokens),
+      cacheReadTokens: toInt(r.cache_read_tokens),
+      cacheWriteTokens: toInt(r.cache_write_tokens),
+      outputTokens: toInt(r.output_tokens),
+    });
+  }
+
+  let grandTotalTokens = 0;
+  let grandTotalCalls = 0;
+  let grandTotalCostUsd = 0;
+
+  const accounts = acctRows.map((a) => {
+    const liveRows = byEmailRows.get(a.email) || [];
+    const liveCost = calculateScopeCosts(liveRows, customPricing).totals;
+
+    const inputTokens = toInt(a.seed_input_tokens) + liveCost.inputTokens;
+    const cacheReadTokens = toInt(a.seed_cache_read_tokens) + liveCost.cacheReadTokens;
+    const cacheWriteTokens = toInt(a.seed_cache_write_tokens) + liveCost.cacheWriteTokens;
+    const outputTokens = toInt(a.seed_output_tokens) + liveCost.outputTokens;
+    const totalTokens = inputTokens + cacheReadTokens + cacheWriteTokens + outputTokens;
+    const calls = toInt(a.seed_calls) + liveCost.calls;
+    const estimatedCostUsd = (Number(a.seed_cost_usd) || 0) + liveCost.totalCost;
+
+    grandTotalTokens += totalTokens;
+    grandTotalCalls += calls;
+    grandTotalCostUsd += estimatedCostUsd;
+
+    let resetPools = [];
+    let credits = [];
+    try { resetPools = JSON.parse(a.pools_json || '[]'); } catch { resetPools = []; }
+    try { credits = JSON.parse(a.credits_json || '[]'); } catch { credits = []; }
+
+    return {
+      email: a.email,
+      name: a.name || a.email,
+      planName: a.plan_name || '',
+      tierName: a.tier_name || '',
+      isActive: Boolean(a.is_active),
+      lastSeenMs: toInt(a.last_seen_ms),
+      resetPools: Array.isArray(resetPools) ? resetPools : [],
+      credits: Array.isArray(credits) ? credits : [],
+      usage: {
+        calls,
+        inputTokens,
+        cacheReadTokens,
+        cacheWriteTokens,
+        outputTokens,
+        totalTokens,
+        estimatedCostUsd,
+      },
+    };
+  });
+
+  return {
+    accounts,
+    summary: {
+      count: accounts.length,
+      totalTokens: grandTotalTokens,
+      totalCalls: grandTotalCalls,
+      totalCostUsd: grandTotalCostUsd,
+    },
+  };
+}
+
+export function removeAccountSnapshot(db, email) {
+  const clean = String(email || '').trim();
+  if (!clean) return false;
+  const row = db.prepare('SELECT is_active FROM accounts WHERE email = ?').get(clean);
+  if (!row || row.is_active === 1) return false;
+  db.exec('BEGIN');
+  try {
+    db.prepare('DELETE FROM accounts WHERE email = ?').run(clean);
+    db.prepare('DELETE FROM account_daily WHERE email = ?').run(clean);
+    db.exec('COMMIT');
+    return true;
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
   }
 }

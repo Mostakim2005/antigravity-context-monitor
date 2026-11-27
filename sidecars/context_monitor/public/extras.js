@@ -1,7 +1,9 @@
 (() => {
   const SWITCH_KEY = 'cm_switcher_v1';
   const SCOPE_KEY = 'cm_scope_v1';
+  const TAB_KEY = 'cm_active_tab_v1';
   const VALID_SCOPES = ['conversation', 'project', '7d', '30d', 'all'];
+  const VALID_TABS = ['session', 'cost', 'accounts', 'heatmap'];
 
   const HOST_CONV_ID =
     globalThis.sidecar?.conversationId ||
@@ -157,8 +159,70 @@
     return document.getElementById('tab-session')?.classList.contains('active') !== false;
   }
 
+  function isCostTabActive() {
+    return Boolean(document.getElementById('tab-cost')?.classList.contains('active'));
+  }
+
   function isSectionEnabled(key) {
     return !globalThis.CM_SECTIONS || globalThis.CM_SECTIONS.isEnabled(key);
+  }
+
+  function saveTabPref(tab) {
+    try {
+      globalThis.localStorage?.setItem(TAB_KEY, tab);
+    } catch {
+      // ignore
+    }
+  }
+
+  function loadTabPref() {
+    try {
+      const t = globalThis.localStorage?.getItem(TAB_KEY);
+      return VALID_TABS.includes(t) ? t : 'session';
+    } catch {
+      return 'session';
+    }
+  }
+
+  function setCustomTabState(tab) {
+    saveTabPref(tab);
+    const tabs = {
+      session: document.getElementById('tab-session'),
+      cost: document.getElementById('tab-cost'),
+      accounts: document.getElementById('tab-accounts'),
+      heatmap: document.getElementById('tab-heatmap'),
+    };
+    const views = {
+      session: document.getElementById('view-session'),
+      cost: document.getElementById('view-cost'),
+      accounts: document.getElementById('view-accounts'),
+      heatmap: document.getElementById('view-heatmap'),
+    };
+    for (const k of VALID_TABS) {
+      const on = k === tab;
+      if (tabs[k]) {
+        tabs[k].classList.toggle('active', on);
+        tabs[k].setAttribute('aria-selected', String(on));
+      }
+      if (views[k]) {
+        views[k].classList.toggle('hidden', !on);
+      }
+    }
+    const pill = document.getElementById('cm-accounts-pill');
+    if (pill) pill.classList.toggle('active', tab === 'accounts');
+  }
+
+  function activateTab(tab) {
+    if (!VALID_TABS.includes(tab)) return;
+    if (tab === 'session' || tab === 'heatmap') {
+      const btn = document.getElementById(`tab-${tab}`);
+      setCustomTabState(tab);
+      btn?.click();
+      return;
+    }
+    setCustomTabState(tab);
+    if (tab === 'cost') refreshScope(false);
+    if (tab === 'accounts') globalThis.CM_ACCOUNTS?.refresh?.(false);
   }
 
   async function refreshConversations(force = false) {
@@ -182,7 +246,7 @@
   }
 
   async function refreshScope(force = false) {
-    if (!isSectionEnabled('scopeCost') || !isSessionTabActive() || runtime.scopeBusy) return;
+    if (!isSectionEnabled('costTab') || (!isCostTabActive() && !force) || runtime.scopeBusy) return;
     runtime.scopeBusy = true;
     try {
       const qs = new URLSearchParams({
@@ -723,6 +787,7 @@
     installContextInterceptor();
 
     const viewSession = document.getElementById('view-session');
+    const viewCost = document.getElementById('view-cost');
     const dashboard = document.getElementById('dashboard');
     if (!viewSession || !dashboard) return;
 
@@ -735,9 +800,8 @@
       const scopeCard = document.createElement('section');
       scopeCard.id = 'scope-cost-card';
       scopeCard.className = 'card scope-cost-card';
-      const quotasCard = document.getElementById('quotas-card');
-      if (quotasCard && quotasCard.nextSibling) {
-        viewSession.insertBefore(scopeCard, quotasCard.nextSibling);
+      if (viewCost) {
+        viewCost.appendChild(scopeCard);
       } else {
         viewSession.insertBefore(scopeCard, dashboard);
       }
@@ -755,6 +819,12 @@
       bindEvents(switcherBar, scopeCard);
     }
 
+    document.getElementById('tab-cost')?.addEventListener('click', () => activateTab('cost'));
+    document.getElementById('tab-accounts')?.addEventListener('click', () => activateTab('accounts'));
+    document.getElementById('cm-accounts-pill')?.addEventListener('click', () => activateTab('accounts'));
+    document.getElementById('tab-session')?.addEventListener('click', () => setCustomTabState('session'));
+    document.getElementById('tab-heatmap')?.addEventListener('click', () => setCustomTabState('heatmap'));
+
     renderSwitcher();
     renderScopeCost();
     renderBreakdown();
@@ -767,7 +837,7 @@
     }
     globalThis.sidecar?.onWorkspaceChange?.((uris) => {
       runtime.workspaceUris = Array.isArray(uris) ? uris : [];
-      if (scopeState.scope === 'project') refreshScope(false);
+      if (scopeState.scope === 'project' && isCostTabActive()) refreshScope(false);
     });
 
     globalThis.CM_I18N?.onChange?.(() => {
@@ -778,12 +848,16 @@
 
     globalThis.CM_SECTIONS?.onChange?.((prefs) => {
       if (prefs.switcher && !runtime.conversations) refreshConversations(false);
-      if (prefs.scopeCost && !runtime.scopeData) refreshScope(false);
+      if (prefs.costTab && isCostTabActive() && !runtime.scopeData) refreshScope(false);
       if (prefs.breakdown && !runtime.breakdownData) refreshBreakdown();
     });
 
+    const savedTab = loadTabPref();
+    if (savedTab !== 'session' && isSectionEnabled(savedTab === 'cost' ? 'costTab' : savedTab === 'accounts' ? 'accountsTab' : 'heatmap')) {
+      setTimeout(() => activateTab(savedTab), 0);
+    }
+
     refreshConversations(false);
-    refreshScope(false);
     refreshBreakdown();
 
     setInterval(() => refreshConversations(false), 15_000);
@@ -797,6 +871,7 @@
     }
   }
 
+  globalThis.CM_TABS = { activateTab, getActiveTab: loadTabPref };
   globalThis.CM_EXTRAS = {
     getEffectiveConvId,
   };

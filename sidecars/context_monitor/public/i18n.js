@@ -8,6 +8,8 @@
     '当前会话 ID': 'Current Conversation ID',
     '视图与压缩阈值': 'Views and compaction limit',
     '当前会话': 'Session',
+    '费用': 'Cost',
+    '多账号': 'Accounts',
     '历史热力图': 'Heatmap',
     '当前上下文窗口上限（来自 LanguageServerService，默认 512K）': 'Active context window limit (LanguageServerService, default 512K)',
     '等待当前会话记录…': 'Waiting for active session…',
@@ -156,7 +158,7 @@
     if (!el || el.nodeType !== 1) return false;
     const tag = el.tagName;
     if (tag === 'SCRIPT' || tag === 'STYLE') return true;
-    if (el.closest?.('#repo-line, #cm-lang-toggle, #quotas-card, #cm-sections-drawer, #cm-sections-btn, #switcher-bar, #scope-cost-card, #breakdown-card')) return true;
+    if (el.closest?.('#repo-line, #cm-lang-toggle, #quotas-card, #cm-sections-drawer, #cm-sections-btn, #switcher-bar, #scope-cost-card, #breakdown-card, #view-cost, #view-accounts, #cm-accounts-pill')) return true;
     if (el.classList?.contains('turn-prompt')) return true;
     return false;
   }

@@ -4,7 +4,6 @@
   const SECTION_DEFS = [
     { key: 'switcher', en: 'Chat Switcher / Lock', zh: '会话切换 / 锁定主控', defaultOn: true },
     { key: 'quotas', en: 'Model Quotas (5h & 7d)', zh: '模型额度（5h / 周额度）', defaultOn: true },
-    { key: 'scopeCost', en: 'Usage & Cost', zh: '用量与费用', defaultOn: true },
     { key: 'gauge', en: 'Context Used', zh: '当前上下文占用', defaultOn: true },
     { key: 'breakdown', en: 'Context Breakdown', zh: '上下文构成', defaultOn: true },
     { key: 'tokenMetrics', en: 'Cache / Input / Output', zh: '缓存 / 输入 / 输出', defaultOn: true },
@@ -12,6 +11,8 @@
     { key: 'totals', en: 'Session Totals', zh: '本会话累计', defaultOn: true },
     { key: 'chart', en: 'Context Growth', zh: '上下文增长趋势', defaultOn: true },
     { key: 'turns', en: 'Prompt Turns', zh: 'Prompt 轮次', defaultOn: true },
+    { key: 'costTab', en: 'Cost', zh: '费用', defaultOn: true },
+    { key: 'accountsTab', en: 'Accounts', zh: '多账号', defaultOn: true },
     { key: 'heatmap', en: 'Heatmap', zh: '历史热力图', defaultOn: true },
   ];
 
@@ -53,7 +54,6 @@
     return {
       switcher: document.getElementById('switcher-bar'),
       quotas: document.getElementById('quotas-card'),
-      scopeCost: document.getElementById('scope-cost-card'),
       gauge: dash?.querySelector(':scope > .gauge-card') || null,
       breakdown: document.getElementById('breakdown-card'),
       tokenMetrics: grids[0] || null,
@@ -61,6 +61,8 @@
       totals: dash?.querySelector(':scope > .totals-card') || null,
       chart: dash?.querySelector(':scope > .chart-card') || null,
       turns: dash?.querySelector(':scope > .history-card') || null,
+      costTab: document.getElementById('tab-cost'),
+      accountsTab: document.getElementById('tab-accounts'),
       heatmap: document.getElementById('tab-heatmap'),
     };
   }
@@ -72,11 +74,15 @@
       if (!el) continue;
       el.classList.toggle('cm-sec-hidden', !prefs[def.key]);
     }
-    if (!prefs.heatmap) {
-      const hmTab = document.getElementById('tab-heatmap');
-      if (hmTab?.classList.contains('active')) {
-        document.getElementById('tab-session')?.click();
-      }
+    const acctPill = document.getElementById('cm-accounts-pill');
+    if (acctPill) acctPill.classList.toggle('cm-sec-hidden', !prefs.accountsTab);
+
+    if (
+      (!prefs.heatmap && document.getElementById('tab-heatmap')?.classList.contains('active')) ||
+      (!prefs.costTab && document.getElementById('tab-cost')?.classList.contains('active')) ||
+      (!prefs.accountsTab && document.getElementById('tab-accounts')?.classList.contains('active'))
+    ) {
+      document.getElementById('tab-session')?.click();
     }
   }
 

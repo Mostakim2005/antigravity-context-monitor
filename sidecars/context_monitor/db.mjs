@@ -632,7 +632,7 @@ export function importMonthArchive(db, bundle) {
   return { monthKey: bundle.monthKey, rowsCount: bundle.rows.length };
 }
 
-export function recordQuotaSamplesAndComputeRunway(db, pools, nowMs = Date.now()) {
+export function recordQuotaSamplesAndComputeRunway(db, pools, nowMs = Date.now(), { isCustomModel = false } = {}) {
   const WINDOW_MS = 45 * 60 * 1000;
   const insert = db.prepare(`
     INSERT OR IGNORE INTO quota_samples (pool_key, ts_ms, remaining_fraction, reset_at_ms)
@@ -647,6 +647,13 @@ export function recordQuotaSamplesAndComputeRunway(db, pools, nowMs = Date.now()
     const remFrac = Math.max(0, Math.min(1, win.remainingPct / 100));
     const resetMs = win.resetTime ? Date.parse(win.resetTime) : null;
     insert.run(p.pool, nowMs, remFrac, Number.isFinite(resetMs) ? resetMs : null);
+
+    if (isCustomModel) {
+      return {
+        ...p,
+        runway: { status: 'custom_model_isolated', burnRatePctPerHour: null, estExhaustMin: null },
+      };
+    }
 
     const rows = db.prepare(
       'SELECT ts_ms, remaining_fraction, reset_at_ms FROM quota_samples WHERE pool_key = ? AND ts_ms >= ? ORDER BY ts_ms ASC',

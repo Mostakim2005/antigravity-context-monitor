@@ -72,6 +72,9 @@
         : `可撑到重置 · ${runway.burnRatePctPerHour}%/h`;
       return `<span class="q-runway is-safe">${esc(txt)}</span>`;
     }
+    if (runway.status === 'custom_model_isolated') {
+      return `<span class="q-runway is-isolated">${lang === 'en' ? 'BYOK · Isolated' : 'BYOK · 已隔离'}</span>`;
+    }
     if (runway.status === 'at_risk' && runway.estExhaustMin != null) {
       const txt = lang === 'en'
         ? `~${fmtMin(runway.estExhaustMin, 'en')} left · ${runway.burnRatePctPerHour}%/h`
@@ -117,7 +120,14 @@
           </div>
         `).join('')}</div>`
         : '';
-      bodyHtml = poolsHtml + renderCreditsRow(lastData.aiCredits, lang);
+      const byokBanner = lastData.activeModel?.isCustomModel
+        ? `<div class="q-byok-note">${
+            lang === 'en'
+              ? `Active model (${esc(lastData.activeModel.label || lastData.activeModel.modelId)}) is BYOK / custom — Google quota burn tracking is isolated.`
+              : `当前模型 (${esc(lastData.activeModel.label || lastData.activeModel.modelId)}) 为 BYOK / 自定义模型，已隔离 Google 额度消耗统计。`
+          }</div>`
+        : '';
+      bodyHtml = byokBanner + poolsHtml + renderCreditsRow(lastData.aiCredits, lang);
     }
 
     card.innerHTML = `
@@ -136,7 +146,12 @@
     loading = true;
     render();
     try {
-      lastData = await apiGet(`/api/quotas${force ? '?force=1' : ''}`);
+      const qs = new URLSearchParams();
+      if (force) qs.set('force', '1');
+      const convId = globalThis.CM_EXTRAS?.getEffectiveConvId?.() || '';
+      if (convId) qs.set('conversationId', convId);
+      const qStr = qs.toString();
+      lastData = await apiGet(`/api/quotas${qStr ? `?${qStr}` : ''}`);
     } catch {
       lastData = lastData || { available: false, pools: [] };
     } finally {
@@ -178,6 +193,7 @@
     }, REFRESH_MS);
   }
 
+  globalThis.CM_QUOTAS = { refresh: fetchQuotas };
   if (globalThis.document) {
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', mount, { once: true });

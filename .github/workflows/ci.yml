@@ -22,6 +22,7 @@ jobs:
           node --check sidecars/context_monitor/lib.mjs &&
           node --check sidecars/context_monitor/quotas.mjs &&
           node --check sidecars/context_monitor/accounts.mjs &&
+          node --check sidecars/context_monitor/diagnostics.mjs &&
           node --check sidecars/context_monitor/pricing.mjs &&
           node --check sidecars/context_monitor/breakdown.mjs &&
           node --check sidecars/context_monitor/db.mjs &&

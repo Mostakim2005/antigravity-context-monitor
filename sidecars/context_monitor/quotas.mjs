@@ -171,6 +171,44 @@ export function parseUserStatusQuotaFallback(raw, nowMs = Date.now()) {
   return { source: 'user_status', pools };
 }
 
+export function isCustomOrByokModel(modelId = '', label = '') {
+  const cleanId = String(modelId || '').trim();
+  const cleanLabel = String(label || '').trim();
+  const customIdRe = [
+    /^custom[-_:/]/i,
+    /^model_custom(?:[-_]|$)/i,
+    /^byok[-_:/]/i,
+    /^(?:ollama|lmstudio|lm-studio|vllm|llamacpp|llama\.cpp|litellm|local|localhost|self[-_]?hosted|openai[-_]?compatible)[-_:/]/i,
+    /^openrouter\//i,
+  ];
+  const builtinIdRe = [
+    /^MODEL_PLACEHOLDER_M\d+$/i,
+    /^MODEL_OPENAI_GPT_OSS_/i,
+    /^MODEL_GOOGLE_/i,
+    /^MODEL_ANTHROPIC_/i,
+    /^MODEL_CLAUDE_/i,
+  ];
+  const customLabelRe = [
+    /\bbyok\b/i,
+    /(?:^|[\s([{-])custom\s+model\b/i,
+    /^custom\s*:/i,
+    /(?:\(|\[)\s*(?:custom|byok|local)\s*(?:\)|\])/i,
+    /\b(?:ollama|lm\s*studio|vllm|local\s+model|self[- ]hosted)\b/i,
+  ];
+
+  if (cleanId) {
+    if (customIdRe.some((re) => re.test(cleanId))) return true;
+    if (builtinIdRe.some((re) => re.test(cleanId))) return /\bbyok\b/i.test(cleanLabel);
+  }
+  if (cleanLabel) {
+    if (/\b(?:orchestrator|编排器|协调器)\b/i.test(cleanLabel) && !/\bbyok\b/i.test(cleanLabel)) {
+      return false;
+    }
+    if (customLabelRe.some((re) => re.test(cleanLabel))) return true;
+  }
+  return false;
+}
+
 export function extractAICredits(rawUserStatus) {
   const userStatus = rawUserStatus?.userStatus;
   if (!userStatus || typeof userStatus !== 'object') return [];

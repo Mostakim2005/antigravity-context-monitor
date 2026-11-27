@@ -17,8 +17,14 @@ import {
   resolveTranscriptFile,
   safeStat,
 } from './lib.mjs';
-import { parseQuotaSummary, parseUserStatusQuotaFallback, extractAICredits } from './quotas.mjs';
+import {
+  parseQuotaSummary,
+  parseUserStatusQuotaFallback,
+  extractAICredits,
+  isCustomOrByokModel,
+} from './quotas.mjs';
 import { extractActiveAccountSnapshot, extractPerModelQuotas, readLegacyMonitorSeed } from './accounts.mjs';
+import { analyzeActiveDiagnostics, readLocalOrchestratorConfig } from './diagnostics.mjs';
 import { computeContextBreakdown } from './breakdown.mjs';
 import { calculateScopeCosts, getCatalogPricingList } from './pricing.mjs';
 import {
@@ -63,6 +69,8 @@ const heatmapFileCache = new Map(); // path -> { mtimeMs, size, convId, dailyMap
 const convSpeedCache = new Map(); // convId -> { mtimeMs, size, speedIndex }
 const titleCache = new Map(); // convId -> { title, repoName, branch, fetchedAt }
 const breakdownCache = new Map(); // convId -> { stepKey, payload }
+const diagnosticsCache = new Map(); // convId -> { cacheKey, payload }
+const activeModelByConv = new Map(); // convId -> { modelId, label, isCustomModel }
 const TITLE_TTL_MS = 60_000;
 const QUOTA_TTL_MS = 30_000;
 const TRAJ_TTL_MS = 10_000;
@@ -185,10 +193,45 @@ async function callLsGeneratorMetadata(convId) {
   return Array.isArray(json?.generatorMetadata) ? json.generatorMetadata : null;
 }
 
-async function getQuotasSnapshot(force = false) {
+function trackActiveConvModel(convId, genMeta) {
+  if (!convId || !Array.isArray(genMeta) || genMeta.length === 0) return null;
+  for (let i = genMeta.length - 1; i >= 0; i--) {
+    const cm = genMeta[i]?.chatModel;
+    if (!cm) continue;
+    const rawId = String(cm.model || cm.responseModel || '').trim();
+    const respId = String(cm.responseModel || '').trim();
+    const label = String(cm.modelDisplayName || respId || rawId).trim();
+    if (!rawId && !label) continue;
+    const isCustom = isCustomOrByokModel(rawId, label) || (respId ? isCustomOrByokModel(respId, label) : false);
+    const info = { modelId: respId || rawId, rawModelId: rawId, label, isCustomModel: isCustom };
+    if (activeModelByConv.size > 64) activeModelByConv.clear();
+    activeModelByConv.set(convId, info);
+    return info;
+  }
+  return null;
+}
+
+async function getQuotasSnapshot(force = false, convId = '') {
   const now = Date.now();
+  const activeModel = convId ? (activeModelByConv.get(convId) || null) : null;
+  const applyActiveIsolation = (basePayload) => {
+    if (!basePayload) return basePayload;
+    const isCustom = Boolean(activeModel?.isCustomModel);
+    const pools = isCustom
+      ? (basePayload.pools || []).map((p) => ({
+          ...p,
+          runway: { status: 'custom_model_isolated', burnRatePctPerHour: null, estExhaustMin: null },
+        }))
+      : basePayload.pools;
+    return {
+      ...basePayload,
+      pools,
+      activeModel: activeModel ? { modelId: activeModel.modelId, label: activeModel.label, isCustomModel: isCustom } : null,
+    };
+  };
+
   if (!force && quotaCache.payload && now - quotaCache.fetchedAt < QUOTA_TTL_MS) {
-    return quotaCache.payload;
+    return applyActiveIsolation(quotaCache.payload);
   }
   const meta = { metadata: { ideName: 'antigravity', extensionName: 'antigravity' } };
   const [summaryRaw, statusRaw] = await Promise.all([
@@ -226,7 +269,7 @@ async function getQuotasSnapshot(force = false) {
         aiCredits: [],
       };
   quotaCache = { fetchedAt: now, payload, modelQuotas };
-  return payload;
+  return applyActiveIsolation(payload);
 }
 
 async function getSummary(convId) {
@@ -241,6 +284,7 @@ async function getSummary(convId) {
   let summary = parseTranscriptText(readTranscriptFile(loc.path));
   const genMeta = await callLsGeneratorMetadata(convId);
   if (genMeta) {
+    trackActiveConvModel(convId, genMeta);
     const speedIndex = buildSpeedIndex(genMeta);
     if (convSpeedCache.size > 512) convSpeedCache.clear();
     convSpeedCache.set(convId, { mtimeMs: st.mtimeMs, size: st.size, speedIndex });
@@ -635,6 +679,37 @@ async function getBreakdownSnapshot(convId) {
   return payload;
 }
 
+async function getDiagnosticsSnapshot(convId) {
+  if (!convId || !ID_RE.test(convId)) {
+    return { available: false, conversationId: convId || null };
+  }
+  const genMeta = await callLsGeneratorMetadata(convId);
+  if (genMeta) trackActiveConvModel(convId, genMeta);
+  const localConfig = readLocalOrchestratorConfig();
+  const customPricing = getCustomPricingMap(getDb());
+  const isSubagentConversation = Boolean(trajCache.byId.get(convId)?.isSubagent);
+  const cacheKey = `${convId}|${genMeta?.length || 0}|${isSubagentConversation ? 1 : 0}|${localConfig?.orchestratorModel || ''}|${localConfig?.orchestratorExecutorModel || ''}|${JSON.stringify(customPricing)}`;
+  const cached = diagnosticsCache.get(convId);
+  if (cached && cached.cacheKey === cacheKey) {
+    return cached.payload;
+  }
+
+  const diag = analyzeActiveDiagnostics({
+    generatorMetadata: genMeta || [],
+    localConfig,
+    customPricing,
+    isSubagentConversation,
+  });
+  const payload = {
+    conversationId: convId,
+    activeModel: activeModelByConv.get(convId) || null,
+    ...diag,
+  };
+  if (diagnosticsCache.size > 16) diagnosticsCache.clear();
+  diagnosticsCache.set(convId, { cacheKey, payload });
+  return payload;
+}
+
 async function ensureActiveAccountEmail() {
   if (currentAccountEmail) return currentAccountEmail;
   await getQuotasSnapshot(false);
@@ -741,7 +816,16 @@ async function getScopeSnapshot(data) {
 
 app.api(
   '/api/quotas',
-  (data) => getQuotasSnapshot(data.force === '1' || data.force === 'true'),
+  (data) => getQuotasSnapshot(
+    data.force === '1' || data.force === 'true',
+    String(data.conversationId || app.config.conversationId || '').trim(),
+  ),
+  'GET',
+);
+
+app.api(
+  '/api/diagnostics',
+  (data) => getDiagnosticsSnapshot(String(data.conversationId || app.config.conversationId || '').trim()),
   'GET',
 );
 

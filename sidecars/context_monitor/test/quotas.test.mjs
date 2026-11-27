@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { formatResetCountdown, parseQuotaSummary, parseUserStatusQuotaFallback } from '../quotas.mjs';
+import { formatResetCountdown, parseQuotaSummary, parseUserStatusQuotaFallback, isCustomOrByokModel } from '../quotas.mjs';
 
 test('formatResetCountdown formats minutes, hours, and days cleanly', () => {
   const now = Date.parse('2026-11-27T10:00:00Z');
@@ -95,4 +95,17 @@ test('parseUserStatusQuotaFallback aggregates minimum remaining quota per pool',
   assert.equal(parsed.pools.length, 2);
   assert.equal(parsed.pools[0].fiveHour.remainingPct, 65);
   assert.equal(parsed.pools[1].fiveHour.remainingPct, 40);
+});
+
+test('isCustomOrByokModel isolates BYOK and local models without false positives on Orchestrator Custom', () => {
+  assert.equal(isCustomOrByokModel('custom-my-model', 'My Model'), true);
+  assert.equal(isCustomOrByokModel('openrouter/deepseek/deepseek-r1', 'DeepSeek R1'), true);
+  assert.equal(isCustomOrByokModel('ollama/qwen3:32b', 'Qwen 3 (Local)'), true);
+  assert.equal(isCustomOrByokModel('', 'Custom: My Endpoint'), true);
+
+  // Antigravity built-in Orchestrator (Custom) still runs on Google quota pools
+  assert.equal(isCustomOrByokModel('MODEL_PLACEHOLDER_M537', 'Orchestrator (Custom)'), false);
+  assert.equal(isCustomOrByokModel('MODEL_PLACEHOLDER_M530', 'Gemini 4 Hydrogen (High)'), false);
+  // Explicit BYOK label overrides built-in ID check
+  assert.equal(isCustomOrByokModel('MODEL_PLACEHOLDER_M530', 'Gemini 4 Hydrogen (BYOK)'), true);
 });

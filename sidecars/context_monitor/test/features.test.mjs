@@ -14,6 +14,12 @@ import { extractAICredits } from '../quotas.mjs';
 import { parseTranscriptText, enrichSummaryWithSpeed } from '../lib.mjs';
 import { extractActiveAccountSnapshot, readLegacyMonitorSeed, extractPerModelQuotas } from '../accounts.mjs';
 import {
+  deduplicateApiErrorText,
+  parseAntigravityUserConfig,
+  readLocalOrchestratorConfig,
+  analyzeActiveDiagnostics,
+} from '../diagnostics.mjs';
+import {
   openContextDb,
   scanTranscriptIncremental,
   queryScopeRows,
@@ -578,4 +584,128 @@ test('phase 3 pricing aliases, compactions, per-model quotas, project/chat break
   assert.equal(acctList.accounts[0].usage.totalTokens, 3300);
   assert.equal(acctList.accounts[0].byModel.length, 2);
   assert.equal(acctList.summary.totalTokens, 3300);
+});
+
+test('phase 4 active-chat orchestrator split, retry/error waste, model dna, config reader, and byok isolation', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'cm-phase4-'));
+  const db = openContextDb(join(dir, 'context.db'));
+  t.after(() => {
+    try { db.close(); } catch {}
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // 1. Doubled error cleanup & config.json orchestrator reader
+  assert.equal(deduplicateApiErrorText('UNAVAILABLE: UNAVAILABLE'), 'UNAVAILABLE');
+  const cfgPath = join(dir, 'config.json');
+  writeFileSync(cfgPath, JSON.stringify({
+    userSettings: {
+      orchestratorModel: 'MODEL_PLACEHOLDER_M537',
+      orchestratorExecutorModel: 'MODEL_PLACEHOLDER_M669',
+      useAiCredits: true,
+    },
+  }));
+  const localCfg = readLocalOrchestratorConfig({ configPath: cfgPath });
+  assert.equal(localCfg.orchestratorModel, 'MODEL_PLACEHOLDER_M537');
+  assert.equal(localCfg.orchestratorExecutorModel, 'MODEL_PLACEHOLDER_M669');
+  assert.equal(localCfg.useAiCredits, true);
+  assert.equal(parseAntigravityUserConfig({}), null);
+
+  // 2. Multi-model Orchestrator <-> Executor cold-cache switch + Retry waste + Model DNA
+  const genMeta = [
+    {
+      stepIndices: [1],
+      plannerConfig: { planExecuteConfig: { executionModel: 'MODEL_PLACEHOLDER_M530' } },
+      chatModel: {
+        model: 'MODEL_PLACEHOLDER_M537',
+        responseModel: 'gemini-4-neon',
+        modelDisplayName: 'Gemini 4 Neon',
+        systemPrompt: 'You are an expert coordinator.',
+        tools: [{ name: 'read_file' }, { name: 'edit_file' }],
+        promptSections: [{ title: 'System Prompt' }, { title: 'MCP Tools' }],
+        completionConfig: { maxTokens: '8192', temperature: 0.4, topP: 0.95, topK: 40, stopPatterns: ['END'] },
+        retries: 2,
+        retryInfos: [
+          { error: 'UNAVAILABLE: UNAVAILABLE', usage: { inputTokens: '100000', outputTokens: '500' }, consumedCredits: [{ creditAmount: '5' }] },
+          { usage: { inputTokens: '50000' } }, // successful attempt entry (no error) must not be counted as wasted retry
+        ],
+        usage: { inputTokens: '50000', cacheReadTokens: '10000', outputTokens: '1000', apiProvider: 'GOOGLE_VERTEX' },
+      },
+    },
+    {
+      stepIndices: [2],
+      chatModel: {
+        model: 'MODEL_PLACEHOLDER_M669',
+        responseModel: 'gemini-4-hydrogen',
+        modelDisplayName: 'Gemini 4 Hydrogen',
+        completionConfig: { maxTokens: 4096, temperature: 0.2 },
+        promptSections: [{ title: 'System Prompt' }],
+        usage: { inputTokens: '40000', cacheReadTokens: '0', outputTokens: '2000', apiProvider: 'GOOGLE_VERTEX' },
+      },
+    },
+    {
+      stepIndices: [3],
+      error: 'RESOURCE_EXHAUSTED: RESOURCE_EXHAUSTED',
+      chatModel: {
+        model: 'custom/local-coder',
+        modelDisplayName: 'Local Coder (BYOK)',
+        usage: { inputTokens: '2000', cacheReadTokens: '0', outputTokens: '100' },
+      },
+    },
+  ];
+
+  const diag = analyzeActiveDiagnostics({ generatorMetadata: genMeta, localConfig: localCfg });
+  assert.equal(diag.available, true);
+  assert.equal(diag.orchestrator.active, true);
+  assert.equal(diag.orchestrator.roles.orchestrator.calls, 1);
+  assert.equal(diag.orchestrator.roles.executor.calls, 1);
+  assert.equal(diag.orchestrator.roles.direct.calls, 1);
+  assert.equal(diag.orchestrator.roleSwitchCount, 1);
+  assert.equal(diag.orchestrator.coldCacheSwitchCount, 1);
+  assert.equal(diag.orchestrator.coldSwitchFreshInputTokens, 40_000);
+  assert.ok(diag.orchestrator.configuredPair);
+
+  assert.equal(diag.retries.totalFailedRetries, 1);
+  assert.equal(diag.retries.callsWithRetries, 2);
+  assert.equal(diag.retries.failedCallsCount, 1);
+  assert.equal(diag.retries.wastedTotalTokens, 100_500);
+  assert.equal(diag.retries.wastedCredits, 5);
+  assert.ok(diag.retries.wastedCostUsd > 0);
+  assert.equal(diag.retries.errorCodes.some((c) => c.code === 'UNAVAILABLE' && c.count === 1), true);
+  assert.equal(diag.retries.errorCodes.some((c) => c.code === 'RESOURCE_EXHAUSTED' && c.count === 1), true);
+
+  assert.equal(diag.modelDna.length, 3);
+  const byokDna = diag.modelDna.find((m) => m.modelKey === 'custom/local-coder');
+  assert.equal(byokDna.isCustomModel, true);
+  const neonDna = diag.modelDna.find((m) => m.modelKey === 'gemini-4-neon');
+  assert.equal(neonDna.apiProvider, 'GOOGLE_VERTEX');
+  assert.equal(neonDna.completionConfig.temperature, 0.4);
+  assert.equal(neonDna.toolCount, 2);
+
+  // 3. Same-model orchestrator delegation detection
+  const sameModelMeta = [
+    {
+      stepIndices: [1],
+      plannerConfig: { planExecuteConfig: { executionModel: 'gemini-4-neon' } },
+      chatModel: { model: 'gemini-4-neon', usage: { inputTokens: 1000, cacheReadTokens: 0, outputTokens: 200 } },
+    },
+    {
+      stepIndices: [2],
+      chatModel: { model: 'gemini-4-neon', usage: { inputTokens: 2000, cacheReadTokens: 0, outputTokens: 300 } },
+    },
+  ];
+  const sameDiag = analyzeActiveDiagnostics({ generatorMetadata: sameModelMeta });
+  assert.equal(sameDiag.orchestrator.active, true);
+  assert.equal(sameDiag.orchestrator.isSameModelOrchestrated, true);
+  assert.equal(sameDiag.orchestrator.roles.orchestrator.calls, 1);
+  assert.equal(sameDiag.orchestrator.roles.executor.calls, 1);
+  assert.equal(sameDiag.orchestrator.coldCacheSwitchCount, 1);
+
+  // 4. BYOK runway isolation inside SQLite quota tracker
+  const isolated = recordQuotaSamplesAndComputeRunway(
+    db,
+    [{ pool: 'gemini', fiveHour: { remainingPct: 75, resetTime: '2026-11-27T18:00:00Z' } }],
+    Date.parse('2026-11-27T14:00:00Z'),
+    { isCustomModel: true },
+  );
+  assert.equal(isolated[0].runway.status, 'custom_model_isolated');
 });

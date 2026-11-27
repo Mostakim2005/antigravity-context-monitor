@@ -42,6 +42,7 @@
     conversations: null,
     scopeData: null,
     breakdownData: null,
+    diagnosticsData: null,
     latestContext: null,
     heatmapAnalytics: null,
     hmMetric: 'tokens', // 'tokens' | 'cost'
@@ -58,6 +59,8 @@
     pendingScopeTimer: null,
     scopeBusy: false,
     breakdownBusy: false,
+    diagnosticsBusy: false,
+    lastDiagCustomModel: null,
   };
 
   function getLang() {
@@ -162,6 +165,7 @@
       runtime.pendingScopeTimer = null;
       refreshScope(false);
       refreshBreakdown();
+      refreshDiagnostics();
     }, 350);
   }
 
@@ -293,6 +297,35 @@
     }
   }
 
+  function anyDiagnosticsEnabled() {
+    return (
+      isSectionEnabled('orchestrator') ||
+      isSectionEnabled('retries') ||
+      isSectionEnabled('modelDna')
+    );
+  }
+
+  async function refreshDiagnostics() {
+    if (!anyDiagnosticsEnabled() || !isSessionTabActive() || runtime.diagnosticsBusy) return;
+    const convId = getEffectiveConvId();
+    if (!convId) return;
+    runtime.diagnosticsBusy = true;
+    try {
+      const payload = await rawApi(`/api/diagnostics?conversationId=${encodeURIComponent(convId)}`);
+      runtime.diagnosticsData = payload;
+      const isCustom = Boolean(payload?.activeModel?.isCustomModel);
+      if (runtime.lastDiagCustomModel !== null && runtime.lastDiagCustomModel !== isCustom) {
+        globalThis.CM_QUOTAS?.refresh?.(false);
+      }
+      runtime.lastDiagCustomModel = isCustom;
+      renderDiagnostics();
+    } catch {
+      renderDiagnostics();
+    } finally {
+      runtime.diagnosticsBusy = false;
+    }
+  }
+
   async function refreshPricingCatalog() {
     try {
       const resp = await rawApi('/api/pricing');
@@ -313,6 +346,8 @@
     }
     refreshScope(false);
     refreshBreakdown();
+    refreshDiagnostics();
+    globalThis.CM_QUOTAS?.refresh?.(false);
   }
 
   function renderSwitcher() {
@@ -768,6 +803,198 @@
     globalThis.CM_SECTIONS?.applyVisibility?.();
   }
 
+  function renderOrchestratorCard(lang) {
+    const card = document.getElementById('orchestrator-card');
+    if (!card) return;
+    const d = runtime.diagnosticsData;
+    const orch = d?.orchestrator;
+    const title = lang === 'en' ? 'Orchestrator vs Executor' : '编排器 vs 执行器';
+
+    if (!d || !d.available || !orch) {
+      card.innerHTML = `
+        <div class="section-head">
+          <span class="section-title">${title}</span>
+          <span class="section-meta">${lang === 'en' ? 'Waiting' : '等待数据'}</span>
+        </div>
+        <div class="sc-empty">${lang === 'en' ? 'No generator telemetry yet.' : '当前会话暂无编排调度数据。'}</div>
+      `;
+      return;
+    }
+
+    const cfg = orch.configuredPair;
+    const cfgPill = cfg
+      ? `<span class="dna-chip" title="~/.gemini/config/config.json">${esc(cfg.planLabel)} → ${esc(cfg.executionLabel)}</span>`
+      : '';
+
+    if (!orch.active) {
+      const direct = orch.roles?.direct || {};
+      card.innerHTML = `
+        <div class="section-head">
+          <span class="section-title">${title}</span>
+          <span class="section-meta">${lang === 'en' ? 'Single-model' : '单模型直连'}</span>
+        </div>
+        <div class="diag-pills">
+          <span class="dna-chip">${direct.calls || 0} ${lang === 'en' ? 'direct calls' : '次直连调用'}</span>
+          ${direct.cacheHitRate != null ? `<span class="cm-tok-pill">${lang === 'en' ? 'Cache' : '缓存'} ${direct.cacheHitRate}%</span>` : ''}
+          ${cfgPill}
+        </div>
+      `;
+      return;
+    }
+
+    const o = orch.roles.orchestrator || {};
+    const e = orch.roles.executor || {};
+    const sub = orch.roles.subagent || {};
+    const coldClass = orch.coldCacheSwitchCount > 0 ? ' is-warn' : ' is-clean';
+
+    card.innerHTML = `
+      <div class="section-head">
+        <span class="section-title">${title}</span>
+        <div class="diag-pills">
+          <span class="dna-chip">${lang === 'en' ? `Switches: ${orch.roleSwitchCount}` : `角色切换: ${orch.roleSwitchCount}`}</span>
+          <span class="diag-badge${coldClass}">${
+            orch.coldCacheSwitchCount > 0
+              ? (lang === 'en' ? `Cold Reset ×${orch.coldCacheSwitchCount} (${fmtTok(orch.coldSwitchFreshInputTokens)})` : `冷缓存重置 ×${orch.coldCacheSwitchCount} (${fmtTok(orch.coldSwitchFreshInputTokens)})`)
+              : (lang === 'en' ? '0 Cold Resets' : '0 次冷重置')
+          }</span>
+        </div>
+      </div>
+      <div class="diag-grid">
+        <div class="diag-role-box">
+          <div class="diag-k">${lang === 'en' ? 'Orchestrator' : '编排器'}</div>
+          <div class="diag-v">${esc(o.labels?.[0] || o.models?.[0] || '—')}</div>
+          <div class="diag-meta">${o.calls || 0} ${lang === 'en' ? 'calls' : '次'} · ${o.cacheHitRate != null ? `${o.cacheHitRate}%` : '—'}</div>
+          <div class="diag-pills">
+            <span class="cm-tok-pill">${fmtTok((o.inputTokens || 0) + (o.cacheReadTokens || 0) + (o.outputTokens || 0))}</span>
+            <span class="cm-cost-pill">${fmtUsd(o.costUsd || 0)}</span>
+          </div>
+        </div>
+        <div class="diag-role-box">
+          <div class="diag-k">${lang === 'en' ? 'Executor' : '执行器'}</div>
+          <div class="diag-v">${esc(e.labels?.[0] || e.models?.[0] || '—')}</div>
+          <div class="diag-meta">${e.calls || 0} ${lang === 'en' ? 'calls' : '次'} · ${e.cacheHitRate != null ? `${e.cacheHitRate}%` : '—'}</div>
+          <div class="diag-pills">
+            <span class="cm-tok-pill">${fmtTok((e.inputTokens || 0) + (e.cacheReadTokens || 0) + (e.outputTokens || 0))}</span>
+            <span class="cm-cost-pill">${fmtUsd(e.costUsd || 0)}</span>
+          </div>
+        </div>
+      </div>
+      ${(sub.calls > 0 || cfgPill) ? `<div class="diag-pills" style="margin-top:6px">${sub.calls > 0 ? `<span class="dna-chip">${lang === 'en' ? 'Subagent' : '子代理'}: ${sub.calls} (${fmtUsd(sub.costUsd || 0)})</span>` : ''}${cfgPill}</div>` : ''}
+    `;
+  }
+
+  function renderRetriesCard(lang) {
+    const card = document.getElementById('retries-card');
+    if (!card) return;
+    const d = runtime.diagnosticsData;
+    const rt = d?.retries;
+    const title = lang === 'en' ? 'Retries & Errors' : '重试与报错';
+
+    if (!d || !d.available || !rt) {
+      card.innerHTML = `
+        <div class="section-head">
+          <span class="section-title">${title}</span>
+          <span class="section-meta">${lang === 'en' ? 'Waiting' : '等待数据'}</span>
+        </div>
+        <div class="sc-empty">${lang === 'en' ? 'No retry data yet.' : '暂无重试检测记录。'}</div>
+      `;
+      return;
+    }
+
+    if (rt.totalFailedRetries === 0 && rt.failedCallsCount === 0) {
+      card.innerHTML = `
+        <div class="section-head">
+          <span class="section-title">${title}</span>
+          <span class="diag-badge is-clean">${lang === 'en' ? 'Healthy · 0 Retries' : '正常 · 0 次重试'}</span>
+        </div>
+      `;
+      return;
+    }
+
+    const codeChips = (rt.errorCodes || []).map((c) => `<span class="diag-badge is-danger">${esc(c.code)} ×${c.count}</span>`).join('');
+    const errRows = (rt.recentErrors || []).slice(0, 4).map((e) => `
+      <div class="diag-err-row">
+        <span class="diag-err-meta">#${e.stepIndex} · ${esc(e.model)} · <strong>${esc(e.code)}</strong></span>
+        <span class="diag-err-msg" title="${esc(e.message)}">${esc(e.message)}</span>
+      </div>
+    `).join('');
+
+    card.innerHTML = `
+      <div class="section-head">
+        <span class="section-title">${title}</span>
+        <span class="diag-badge is-warn">${rt.totalFailedRetries} ${lang === 'en' ? 'retries' : '次重试'}${rt.failedCallsCount > 0 ? ` · ${rt.failedCallsCount} ${lang === 'en' ? 'err' : '报错'}` : ''}</span>
+      </div>
+      <div class="diag-pills">
+        <span class="cm-tok-pill">${lang === 'en' ? 'Wasted' : '浪费'}: ${fmtTok(rt.wastedTotalTokens)}</span>
+        <span class="cm-cost-pill">${fmtUsd(rt.wastedCostUsd)}</span>
+        ${codeChips}
+      </div>
+      ${errRows ? `<div class="diag-err-list">${errRows}</div>` : ''}
+    `;
+  }
+
+  function renderModelDnaCard(lang) {
+    const card = document.getElementById('model-dna-card');
+    if (!card) return;
+    const d = runtime.diagnosticsData;
+    const list = Array.isArray(d?.modelDna) ? d.modelDna : [];
+    const title = lang === 'en' ? 'Model DNA' : '模型参数画像';
+
+    if (!d || !d.available || list.length === 0) {
+      card.innerHTML = `
+        <div class="section-head">
+          <span class="section-title">${title}</span>
+          <span class="section-meta">${lang === 'en' ? 'Waiting' : '等待数据'}</span>
+        </div>
+        <div class="sc-empty">${lang === 'en' ? 'No model DNA telemetry yet.' : '暂无模型参数画像。'}</div>
+      `;
+      return;
+    }
+
+    const itemsHtml = list.map((m) => {
+      const cc = m.completionConfig;
+      const chips = [];
+      if (m.apiProvider) chips.push(m.apiProvider);
+      if (cc?.temperature != null) chips.push(`temp ${cc.temperature}`);
+      if (cc?.topP != null) chips.push(`topP ${cc.topP}`);
+      if (cc?.topK > 0) chips.push(`topK ${cc.topK}`);
+      if (cc?.maxTokens > 0) chips.push(`max ${fmtTok(cc.maxTokens)}`);
+      if (m.toolCount > 0) chips.push(`${m.toolCount} tools`);
+      if (m.hasSystemPrompt) chips.push(lang === 'en' ? 'SysPrompt' : '系统提示词');
+      const chipHtml = chips.map((c) => `<span class="dna-chip">${esc(c)}</span>`).join('');
+      const secHtml = (m.promptSectionTitles || []).slice(0, 6).map((t) => `<span class="dna-sec-chip">${esc(t)}</span>`).join('');
+      return `
+        <div class="dna-item">
+          <div class="dna-head">
+            <span class="sc-model-name">${esc(m.label)}</span>
+            <div class="diag-pills">
+              ${m.isCustomModel ? '<span class="diag-badge is-warn">BYOK</span>' : ''}
+              <span class="sc-model-meta">${m.calls} ${lang === 'en' ? 'calls' : '次'}${m.responseModel ? ` · ${esc(m.responseModel)}` : ''}</span>
+            </div>
+          </div>
+          ${chipHtml ? `<div class="dna-chips">${chipHtml}</div>` : ''}
+          ${secHtml ? `<div class="dna-chips">${secHtml}</div>` : ''}
+        </div>
+      `;
+    }).join('');
+
+    card.innerHTML = `
+      <div class="section-head">
+        <span class="section-title">${title}</span>
+        <span class="section-meta">${list.length} ${lang === 'en' ? 'models' : '模型'}</span>
+      </div>
+      <div class="dna-list">${itemsHtml}</div>
+    `;
+  }
+
+  function renderDiagnostics() {
+    const lang = getLang();
+    renderOrchestratorCard(lang);
+    renderRetriesCard(lang);
+    renderModelDnaCard(lang);
+    globalThis.CM_SECTIONS?.applyVisibility?.();
+  }
+
   function renderGaugeExtra() {
     const gaugeCard = document.querySelector('#dashboard > .gauge-card');
     if (!gaugeCard) return;
@@ -1148,6 +1375,21 @@
         dashboard.appendChild(bdCard);
       }
 
+      const historyCard = dashboard.querySelector(':scope > .history-card');
+      for (const [id, cls] of [
+        ['orchestrator-card', 'card diag-card'],
+        ['retries-card', 'card diag-card'],
+        ['model-dna-card', 'card diag-card'],
+      ]) {
+        if (!document.getElementById(id)) {
+          const sec = document.createElement('section');
+          sec.id = id;
+          sec.className = cls;
+          if (historyCard) dashboard.insertBefore(sec, historyCard);
+          else dashboard.appendChild(sec);
+        }
+      }
+
       bindEvents(switcherBar, scopeCard);
 
       bdCard.addEventListener('click', async (e) => {
@@ -1203,6 +1445,7 @@
     renderSwitcher();
     renderScopeCost();
     renderBreakdown();
+    renderDiagnostics();
 
     try {
       const uris = await globalThis.sidecar?.getWorkspaceUris?.();
@@ -1219,12 +1462,16 @@
       renderSwitcher();
       renderScopeCost();
       renderBreakdown();
+      renderDiagnostics();
     });
 
     globalThis.CM_SECTIONS?.onChange?.((prefs) => {
       if (prefs.switcher && !runtime.conversations) refreshConversations(false);
       if (prefs.costTab && isCostTabActive() && !runtime.scopeData) refreshScope(false);
       if (prefs.breakdown && !runtime.breakdownData) refreshBreakdown();
+      if ((prefs.orchestrator || prefs.retries || prefs.modelDna) && !runtime.diagnosticsData) {
+        refreshDiagnostics();
+      }
     });
 
     const savedTab = loadTabPref();
@@ -1234,6 +1481,7 @@
 
     refreshConversations(false);
     refreshBreakdown();
+    refreshDiagnostics();
 
     setInterval(() => refreshConversations(false), 15_000);
   }

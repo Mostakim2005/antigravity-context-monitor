@@ -232,10 +232,26 @@ export function parseTranscriptText(text) {
 
   const totalPromptTokens = sumInput + sumCacheRead;
 
+  const compactions = [];
+  const COMPACTION_MIN_DROP = 25_000;
+  for (let i = 1; i < modelSteps.length; i++) {
+    const prev = modelSteps[i - 1].contextUsed;
+    const curr = modelSteps[i].contextUsed;
+    if (prev > curr && prev - curr >= COMPACTION_MIN_DROP) {
+      compactions.push({
+        stepIndex: modelSteps[i].stepIndex,
+        beforeTokens: prev,
+        afterTokens: curr,
+        savedTokens: prev - curr,
+      });
+    }
+  }
+
   return {
     totalSteps,
     modelCalls: modelSteps.length,
     turnCount: summarizedTurns.length,
+    compactions,
     latest,
     totals: {
       inputTokens: sumInput,
@@ -406,16 +422,21 @@ export function enrichSummaryWithSpeed(summary, speedIndex) {
     }
   }
 
+  const models = [...modelsSet];
+  const activeModel = latest?.speed?.model || models[models.length - 1] || '';
+  const nativeLimitTokens = /gemini|claude|opus|sonnet|deepseek/i.test(activeModel) ? 1_048_576 : FIXED_LIMIT_TOKENS;
+
   return {
     ...summary,
     latest,
     recentTurns,
     contextLimitTokens: latestMaxContext > 0 ? latestMaxContext : null,
+    nativeLimitTokens: nativeLimitTokens > (latestMaxContext || FIXED_LIMIT_TOKENS) ? nativeLimitTokens : 0,
     speedStats: {
       avgTtftSec: ttftCount > 0 ? Number((ttftSum / ttftCount).toFixed(2)) : null,
       avgStreamingTps: streamSecSum > 0 ? Number((streamOutSum / streamSecSum).toFixed(1)) : null,
       sampleCount: uniqueAll.size,
-      models: [...modelsSet],
+      models,
     },
   };
 }

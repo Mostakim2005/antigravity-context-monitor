@@ -13,6 +13,8 @@
     { key: 'turns', en: 'Prompt Turns', zh: 'Prompt 轮次', defaultOn: true },
     { key: 'costTab', en: 'Cost', zh: '费用', defaultOn: true },
     { key: 'accountsTab', en: 'Accounts', zh: '多账号', defaultOn: true },
+    { key: 'accountsModels', en: 'All Models & API Rates', zh: '全模型用量与 API 费率', defaultOn: true },
+    { key: 'accountsQuotas', en: 'Per-Model Quotas (5h & 7d)', zh: '单模型 5h / 7d 剩余额度', defaultOn: true },
     { key: 'heatmap', en: 'Heatmap', zh: '历史热力图', defaultOn: true },
   ];
 
@@ -63,6 +65,8 @@
       turns: dash?.querySelector(':scope > .history-card') || null,
       costTab: document.getElementById('tab-cost'),
       accountsTab: document.getElementById('tab-accounts'),
+      accountsModels: document.getElementById('acct-all-models-card'),
+      accountsQuotas: document.getElementById('acct-model-quotas-card'),
       heatmap: document.getElementById('tab-heatmap'),
     };
   }

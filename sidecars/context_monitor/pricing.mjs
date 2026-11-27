@@ -28,6 +28,7 @@ const ALIAS_MAP = {
   m530: 'gemini-4-hydrogen',
   m531: 'gemini-4-hydrogen',
   m532: 'gemini-4-neon',
+  m18: 'gemini-3-flash',
   m133: 'gemini-3-flash',
   m84: 'gemini-3.5-flash',
   m20: 'gemini-3.5-flash',
@@ -35,8 +36,21 @@ const ALIAS_MAP = {
   m264: 'gemini-3.6-flash',
   m265: 'gemini-3.6-flash',
   m266: 'gemini-3.6-flash',
+  m318: 'gemini-3.8-flash',
+  m319: 'gemini-3.8-flash',
+  m320: 'gemini-3.8-flash',
   m16: 'gemini-3.1-pro',
   m37: 'gemini-3.1-pro',
+};
+
+const EXTRA_NAME_ALIASES = {
+  'gemini-pro-orchestrator-neon': 'gemini-4-neon',
+  'gemini-pro-orchestrator-argon': 'gemini-4-argon',
+  'gemini-pro-orchestrator': 'gemini-4-carbon',
+  'orchestrator-neon': 'gemini-4-neon',
+  'orchestrator-argon': 'gemini-4-argon',
+  'orchestrator-carbon': 'gemini-4-carbon',
+  'gemini-flash-worker-agy': 'gemini-4-hydrogen',
 };
 
 export function normalizeModelKey(rawModel) {
@@ -48,8 +62,14 @@ export function normalizeModelKey(rawModel) {
 
   const stripped = s
     .replace(/^(?:openrouter|google|anthropic|openai|deepseek-ai)\//, '')
-    .replace(/[-_](?:low|medium|high|xhigh|extra[-_]high)$/i, '')
+    .replace(/\s*\([^)]*\)\s*/g, '')
+    .replace(/[-_](?:low|medium|high|xhigh|extra[-_]high|thinking)$/i, '')
     .replace(/[_\s]+/g, '-');
+
+  if (EXTRA_NAME_ALIASES[stripped]) return EXTRA_NAME_ALIASES[stripped];
+  for (const [alias, canonical] of Object.entries(EXTRA_NAME_ALIASES)) {
+    if (stripped.includes(alias)) return canonical;
+  }
 
   for (const key of Object.keys(DEFAULT_MODEL_PRICING)) {
     if (stripped === key || stripped.includes(key)) return key;

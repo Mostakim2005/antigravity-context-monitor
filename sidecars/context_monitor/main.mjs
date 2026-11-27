@@ -18,21 +18,26 @@ import {
   safeStat,
 } from './lib.mjs';
 import { parseQuotaSummary, parseUserStatusQuotaFallback, extractAICredits } from './quotas.mjs';
-import { extractActiveAccountSnapshot, readLegacyMonitorSeed } from './accounts.mjs';
+import { extractActiveAccountSnapshot, extractPerModelQuotas, readLegacyMonitorSeed } from './accounts.mjs';
 import { computeContextBreakdown } from './breakdown.mjs';
 import { calculateScopeCosts, getCatalogPricingList } from './pricing.mjs';
 import {
+  backfillLegacyAccountModelsOnce,
+  buildProjectAndChatBreakdowns,
   deleteCustomPricingEntry,
   exportMonthArchive,
+  getCostPrefs,
   getCustomPricingMap,
   importMonthArchive,
   listAccountSnapshots,
   listMonthsInDb,
   openContextDb,
+  queryHeatmapSql,
   queryScopeRows,
   recordQuotaSamplesAndComputeRunway,
   removeAccountSnapshot,
   resolveDbPath,
+  saveCostPrefs,
   saveCustomPricingEntry,
   scanTranscriptIncremental,
   seedAccountsFromLegacyOnce,
@@ -62,7 +67,7 @@ const TITLE_TTL_MS = 60_000;
 const QUOTA_TTL_MS = 30_000;
 const TRAJ_TTL_MS = 10_000;
 const SCOPE_SYNC_TTL_MS = 5_000;
-let quotaCache = { fetchedAt: 0, payload: null };
+let quotaCache = { fetchedAt: 0, payload: null, modelQuotas: [] };
 let trajCache = { fetchedAt: 0, list: [], byId: new Map() };
 let lastBrainSyncAt = 0;
 let currentAccountEmail = '';
@@ -77,9 +82,13 @@ function getDb() {
     legacySeedChecked = true;
     try {
       const done = dbInstance.prepare("SELECT 1 FROM kv WHERE k = 'legacy_accounts_imported_ms'").get();
-      if (!done) {
+      const doneModels = dbInstance.prepare("SELECT 1 FROM kv WHERE k = 'legacy_account_models_seeded_v1'").get();
+      if (!done || !doneModels) {
         const legacy = readLegacyMonitorSeed();
-        if (legacy) seedAccountsFromLegacyOnce(dbInstance, legacy, Date.now());
+        if (legacy) {
+          if (!done) seedAccountsFromLegacyOnce(dbInstance, legacy, Date.now());
+          else backfillLegacyAccountModelsOnce(dbInstance, legacy);
+        }
       }
     } catch {
       // Ignore optional legacy state migration failures
@@ -192,6 +201,7 @@ async function getQuotasSnapshot(force = false) {
     parsed = parseUserStatusQuotaFallback(statusRaw, now);
   }
   const aiCredits = extractAICredits(statusRaw);
+  const modelQuotas = extractPerModelQuotas(statusRaw, parsed, now);
   let pools = parsed?.pools || [];
   if (pools.length > 0) {
     try {
@@ -215,7 +225,7 @@ async function getQuotasSnapshot(force = false) {
         pools: [],
         aiCredits: [],
       };
-  quotaCache = { fetchedAt: now, payload };
+  quotaCache = { fetchedAt: now, payload, modelQuotas };
   return payload;
 }
 
@@ -637,9 +647,31 @@ async function getAccountsSnapshot(force = false) {
     await getQuotasSnapshot(force);
   }
   const db = getDb();
+  const activeAccountEmail = currentAccountEmail;
+  if (now - lastBrainSyncAt > SCOPE_SYNC_TTL_MS || force) {
+    try {
+      const trajs = await fetchTrajectoriesCached(false);
+      const workspaceByConv = new Map();
+      for (const t of trajs.list) {
+        workspaceByConv.set(t.cascadeId, { workspaceUri: t.workspaceUri || '', title: t.summary || '' });
+      }
+      syncBrainIncremental(db, { workspaceByConv, activeAccountEmail });
+      lastBrainSyncAt = now;
+    } catch {
+      // ignore non-critical sync
+    }
+  }
+  const customPricing = getCustomPricingMap(db);
+  const { rows } = queryScopeRows(db, { scope: 'all', nowMs: now });
+  const allModelsCost = calculateScopeCosts(rows, customPricing);
+
   return {
     updatedAt: new Date(now).toISOString(),
     ...listAccountSnapshots(db),
+    allModels: allModelsCost.byModel,
+    allModelsTotals: allModelsCost.totals,
+    modelQuotas: quotaCache.modelQuotas || [],
+    costPrefs: getCostPrefs(db),
   };
 }
 
@@ -690,6 +722,7 @@ async function getScopeSnapshot(data) {
   });
   const customPricing = getCustomPricingMap(db);
   const cost = calculateScopeCosts(rows, customPricing);
+  const { byProject, byChat } = buildProjectAndChatBreakdowns(rows, customPricing);
   const months = listMonthsInDb(db);
 
   return {
@@ -699,6 +732,9 @@ async function getScopeSnapshot(data) {
     archivedMonthsUsed,
     months,
     customPricingCount: Object.keys(customPricing).length,
+    costPrefs: getCostPrefs(db),
+    byProject,
+    byChat,
     ...cost,
   };
 }
@@ -791,6 +827,35 @@ app.api(
     return { ok: true, ...res, months: listMonthsInDb(db) };
   },
   'POST',
+);
+
+app.api(
+  '/api/cost-prefs',
+  () => ({ prefs: getCostPrefs(getDb()) }),
+  'GET',
+);
+
+app.api(
+  '/api/cost-prefs',
+  (data) => ({ ok: true, prefs: saveCostPrefs(getDb(), data || {}) }),
+  'POST',
+);
+
+app.api(
+  '/api/heatmap/analytics',
+  (data) => {
+    const db = getDb();
+    try {
+      syncBrainIncremental(db, { activeAccountEmail: currentAccountEmail });
+    } catch {
+      // ignore non-critical sync
+    }
+    return queryHeatmapSql(db, {
+      weeks: data.weeks,
+      sourceFilter: String(data.source || 'all').trim().toLowerCase(),
+    });
+  },
+  'GET',
 );
 
 app.api(

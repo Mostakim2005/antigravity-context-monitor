@@ -11,12 +11,13 @@ A lightweight Antigravity 2.0 Sidecar UI plugin (`SIDECAR_UI_ENTRYPOINT_AUX_PANE
 - **5h & 7d Model Quotas + Burn-Rate Runway & AI Credits**: Displays Gemini and Claude/GPT quota pools with countdowns, SQLite-backed burn-rate runway estimates (`Safe · X%/h` vs estimated exhaustion time), and `availableCredits`.
 - **DSH-Style Scope Switcher & API Cost Attribution (`Active | Project | 7d | 30d | All`)**:
   - Incremental byte-offset SQLite scanner (`node:sqlite`, zero external DB binaries) indexing `transcript.jsonl` without re-parsing unchanged files or frozen months.
-  - Shows total USD cost, Cache Saved (`$`), separated **Input (cache miss)** / **Cache hit** / **Output**, per-model cost breakdown, and editable custom API pricing (`$/1M`).
+  - Bordered high-contrast Token & API Cost pills, **Models / Projects (nested chats) / Chats** breakdown modes, Currency FX + Plan ROI tracking, and editable custom API pricing (`$/1M`).
   - **Monthly Archive Export & Freeze**: Export any month's ledger as JSON and freeze closed sessions so historical months are never rescanned, plus one-click JSON re-import for historical viewing.
-- **Dynamic Context Window Gauge + 9-Category Breakdown**: Tracks live context occupancy against `maxContextTokens` (default 512K) plus a 9-category stacked breakdown bar and Top 5 largest context consumers.
+- **Multi-Account Status, All-Model Rates & Per-Model `5h / 7d` Quotas (`Accounts` Tab)**: Tracks active/cached account tokens and API rate values, collapsible per-account models, global **All Models & API Rates**, and **Per-Model Quotas (`5h & 7d`)**.
+- **Dynamic Context Window Gauge + 9-Category Breakdown**: Tracks live context occupancy (`512K` compaction threshold vs `1M` native limit + compaction history), a 9-category stacked breakdown bar + Top 5 largest items, and one-click **Copy `/context`** / **Copy Handoff** buttons.
 - **Hide / Show Any Section (`Sections`)**: Completely hide unused panels (`0` background RPCs/scans when hidden).
 - **Theme Contrast Parity**: Automatically syncs with Antigravity Light and Dark theme variables with high-contrast WCAG-tuned badges and compact density.
-- **16-Week Activity Heatmap**: Dedicated daily heatmap across Antigravity desktop and `agy` CLI (`~/.gemini/*/brain`).
+- **16-Week SQLite Activity & Cost Heatmap**: Dedicated daily heatmap across Antigravity desktop and `agy` CLI (`~/.gemini/*/brain`) with `Tokens / $ Cost` toggle, `All / App / CLI` filter, streak counters, and `7d / 30d / Year` summaries.
 
 ## Architecture & Future Go Migration Note
 

@@ -1,11 +1,11 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { parseResetMs } from './quotas.mjs';
+import { formatResetCountdown, parseResetMs } from './quotas.mjs';
 
 function inferPoolKeyForAccount(label, modelId) {
   const s = `${label || ''} ${modelId || ''}`.toLowerCase();
-  if (/claude|sonnet|opus|haiku|gpt-oss|openai/.test(s)) return 'claude_gpt';
+  if (/claude|sonnet|opus|haiku|gpt-oss|openai/.test(s)) return 'premium';
   if (/gemini/.test(s)) return 'gemini';
   return 'other';
 }
@@ -125,6 +125,71 @@ export function resolveLegacyMonitorStatePath(env = process.env, platform = proc
   return join(xdg, 'antigravity-context-monitor', 'state-v1.json');
 }
 
+export function extractPerModelQuotas(rawUserStatus, summaryParsed = null, nowMs = Date.now()) {
+  const us = rawUserStatus?.userStatus;
+  if (!us || typeof us !== 'object') return [];
+  const configs = Array.isArray(us.cascadeModelConfigData?.clientModelConfigs)
+    ? us.cascadeModelConfigData.clientModelConfigs
+    : [];
+
+  const summaryPools = new Map();
+  for (const p of summaryParsed?.pools || []) {
+    summaryPools.set(p.pool, p);
+  }
+
+  const out = [];
+  const seen = new Set();
+  for (const cfg of configs) {
+    if (!cfg || typeof cfg !== 'object') continue;
+    const label = String(cfg.label || '').trim();
+    const modelId = String(cfg.modelId || cfg.modelOrAlias?.model || '').trim();
+    if (!label && !modelId) continue;
+    const dedupeKey = `${label}|${modelId}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+
+    const qi = cfg.quotaInfo;
+    const family = inferPoolKeyForAccount(label, modelId);
+    const poolSummary = summaryPools.get(family) || null;
+
+    let fiveHour = null;
+    if (qi && typeof qi === 'object') {
+      const resetMs = parseResetMs(qi.resetTime);
+      const frac = resolveRemainingFraction(qi, resetMs);
+      if (frac !== null) {
+        fiveHour = {
+          remainingPct: Math.round(frac * 100),
+          resetTime: resetMs && resetMs > 0 ? String(qi.resetTime).trim() : null,
+          resetCountdown: formatResetCountdown(resetMs, nowMs),
+        };
+      }
+    } else if (poolSummary?.fiveHour) {
+      fiveHour = {
+        remainingPct: poolSummary.fiveHour.remainingPct,
+        resetTime: poolSummary.fiveHour.resetTime,
+        resetCountdown: poolSummary.fiveHour.resetCountdown,
+      };
+    }
+
+    const weekly = poolSummary?.weekly
+      ? {
+          remainingPct: poolSummary.weekly.remainingPct,
+          resetTime: poolSummary.weekly.resetTime,
+          resetCountdown: poolSummary.weekly.resetCountdown,
+        }
+      : null;
+
+    out.push({
+      label: label || modelId,
+      modelId,
+      family,
+      fiveHour,
+      weekly,
+    });
+  }
+  return out;
+}
+
 function addLedgerBucket(accMap, email, bucket) {
   if (!email || !bucket || typeof bucket !== 'object') return;
   let cur = accMap.get(email);
@@ -136,6 +201,7 @@ function addLedgerBucket(accMap, email, bucket) {
       cacheWriteTokens: 0,
       outputTokens: 0,
       costUsd: 0,
+      modelRows: new Map(),
     };
     accMap.set(email, cur);
   }
@@ -146,6 +212,22 @@ function addLedgerBucket(accMap, email, bucket) {
   cur.outputTokens += Math.max(0, Math.round(Number(bucket.totalOutputTokens) || 0));
   const estCost = Number(bucket.totalEstimatedCost);
   if (Number.isFinite(estCost) && estCost > 0) cur.costUsd += estCost;
+
+  if (bucket.modelStats && typeof bucket.modelStats === 'object') {
+    for (const [modelName, ms] of Object.entries(bucket.modelStats)) {
+      if (!ms || typeof ms !== 'object') continue;
+      let m = cur.modelRows.get(modelName);
+      if (!m) {
+        m = { model: modelName, calls: 0, inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0 };
+        cur.modelRows.set(modelName, m);
+      }
+      m.calls += Math.max(0, Math.round(Number(ms.calls) || 0));
+      m.inputTokens += Math.max(0, Math.round(Number(ms.inputTokens) || 0));
+      m.cacheReadTokens += Math.max(0, Math.round(Number(ms.cacheReadTokens) || 0));
+      m.cacheWriteTokens += Math.max(0, Math.round(Number(ms.cacheCreationTokens) || 0));
+      m.outputTokens += Math.max(0, Math.round(Number(ms.outputTokens) || 0));
+    }
+  }
 }
 
 export function readLegacyMonitorSeed(statePath = resolveLegacyMonitorStatePath()) {
@@ -183,14 +265,26 @@ export function readLegacyMonitorSeed(statePath = resolveLegacyMonitorStatePath(
     const email = String(s?.email || '').trim();
     if (!email || seenEmails.has(email)) continue;
     seenEmails.add(email);
-    const seed = ledgerByEmail.get(email) || {
-      calls: 0,
-      inputTokens: 0,
-      cacheReadTokens: 0,
-      cacheWriteTokens: 0,
-      outputTokens: 0,
-      costUsd: 0,
-    };
+    const rawSeed = ledgerByEmail.get(email);
+    const seed = rawSeed
+      ? {
+          calls: rawSeed.calls,
+          inputTokens: rawSeed.inputTokens,
+          cacheReadTokens: rawSeed.cacheReadTokens,
+          cacheWriteTokens: rawSeed.cacheWriteTokens,
+          outputTokens: rawSeed.outputTokens,
+          costUsd: rawSeed.costUsd,
+          models: [...rawSeed.modelRows.values()],
+        }
+      : {
+          calls: 0,
+          inputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          outputTokens: 0,
+          costUsd: 0,
+          models: [],
+        };
     const lastSeenMs = s.lastSeen ? Date.parse(s.lastSeen) || Date.now() : Date.now();
     accounts.push({
       email,
@@ -205,7 +299,7 @@ export function readLegacyMonitorSeed(statePath = resolveLegacyMonitorStatePath(
     });
   }
 
-  for (const [email, seed] of ledgerByEmail.entries()) {
+  for (const [email, rawSeed] of ledgerByEmail.entries()) {
     if (seenEmails.has(email)) continue;
     accounts.push({
       email,
@@ -216,7 +310,15 @@ export function readLegacyMonitorSeed(statePath = resolveLegacyMonitorStatePath(
       lastSeenMs: Date.now(),
       resetPools: [],
       credits: [],
-      seed,
+      seed: {
+        calls: rawSeed.calls,
+        inputTokens: rawSeed.inputTokens,
+        cacheReadTokens: rawSeed.cacheReadTokens,
+        cacheWriteTokens: rawSeed.cacheWriteTokens,
+        outputTokens: rawSeed.outputTokens,
+        costUsd: rawSeed.costUsd,
+        models: [...rawSeed.modelRows.values()],
+      },
     });
   }
 

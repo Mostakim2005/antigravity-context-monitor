@@ -379,6 +379,14 @@ function normalizeWs(uri) {
   return decodeURIComponent(String(uri || '').trim()).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 }
 
+function formatProjectName(uri) {
+  const norm = normalizeWs(uri);
+  if (!norm) return 'Unscoped / No Workspace';
+  const stripped = norm.replace(/^file:\/\//i, '').replace(/\/+$/, '');
+  const parts = stripped.split('/').filter(Boolean);
+  return parts[parts.length - 1] || norm;
+}
+
 export function queryScopeRows(db, {
   scope = 'conversation',
   convId = '',
@@ -389,7 +397,8 @@ export function queryScopeRows(db, {
   let sql = `
     SELECT d.conv_id, d.date_key, d.month_key, d.model, d.calls,
            d.input_tokens, d.cache_read_tokens, d.cache_write_tokens,
-           d.output_tokens, d.thinking_tokens
+           d.output_tokens, d.thinking_tokens,
+           c.title AS conv_title, c.workspace_uri AS conv_workspace_uri
     FROM conv_daily d
     LEFT JOIN conversations c ON c.conv_id = d.conv_id
   `;
@@ -447,9 +456,12 @@ export function queryScopeRows(db, {
 function mapRowsAndSummary(rawRows, archivedMonthsUsed) {
   const convSet = new Set();
   const rows = rawRows.map((r) => {
-    if (r.conv_id || r.convId) convSet.add(r.conv_id || r.convId);
+    const cid = r.conv_id || r.convId || '';
+    if (cid) convSet.add(cid);
     return {
-      convId: r.conv_id || r.convId || '',
+      convId: cid,
+      convTitle: r.conv_title || r.convTitle || '',
+      workspaceUri: r.conv_workspace_uri || r.workspaceUri || '',
       dateKey: r.date_key || r.dateKey || '',
       monthKey: r.month_key || r.monthKey || '',
       model: r.model || 'unknown',
@@ -462,6 +474,85 @@ function mapRowsAndSummary(rawRows, archivedMonthsUsed) {
     };
   });
   return { rows, conversationsCount: convSet.size, archivedMonthsUsed };
+}
+
+export function buildProjectAndChatBreakdowns(rows, customPricing = {}) {
+  const convMeta = new Map();
+  const byConvRows = new Map();
+  for (const r of rows || []) {
+    const cid = r.convId || 'unknown';
+    if (!convMeta.has(cid)) {
+      convMeta.set(cid, {
+        convId: cid,
+        title: String(r.convTitle || '').trim() || cid.slice(0, 8),
+        workspaceUri: String(r.workspaceUri || ''),
+        projectKey: normalizeWs(r.workspaceUri || '') || '__unscoped__',
+        projectName: formatProjectName(r.workspaceUri || ''),
+      });
+    }
+    let arr = byConvRows.get(cid);
+    if (!arr) {
+      arr = [];
+      byConvRows.set(cid, arr);
+    }
+    arr.push(r);
+  }
+
+  const projectsMap = new Map();
+  const byChat = [];
+
+  for (const [cid, meta] of convMeta.entries()) {
+    const cRows = byConvRows.get(cid) || [];
+    const cost = calculateScopeCosts(cRows, customPricing);
+    const chatItem = {
+      convId: cid,
+      title: meta.title,
+      projectKey: meta.projectKey,
+      projectName: meta.projectName,
+      calls: cost.totals.calls,
+      totalTokens: cost.totals.totalTokens,
+      inputTokens: cost.totals.inputTokens,
+      cacheReadTokens: cost.totals.cacheReadTokens,
+      outputTokens: cost.totals.outputTokens,
+      totalCost: cost.totals.totalCost,
+      cacheSavedUsd: cost.totals.cacheSavedUsd,
+      models: cost.byModel.map((m) => m.label),
+    };
+    byChat.push(chatItem);
+
+    let proj = projectsMap.get(meta.projectKey);
+    if (!proj) {
+      proj = {
+        projectKey: meta.projectKey,
+        projectName: meta.projectName,
+        workspaceUri: meta.workspaceUri,
+        chatsCount: 0,
+        calls: 0,
+        totalTokens: 0,
+        totalCost: 0,
+        cacheSavedUsd: 0,
+        chats: [],
+      };
+      projectsMap.set(meta.projectKey, proj);
+    }
+    proj.chatsCount += 1;
+    proj.calls += chatItem.calls;
+    proj.totalTokens += chatItem.totalTokens;
+    proj.totalCost += chatItem.totalCost;
+    proj.cacheSavedUsd += chatItem.cacheSavedUsd;
+    proj.chats.push(chatItem);
+  }
+
+  for (const proj of projectsMap.values()) {
+    proj.chats.sort((a, b) => b.totalCost - a.totalCost || b.totalTokens - a.totalTokens);
+  }
+
+  const byProject = [...projectsMap.values()].sort(
+    (a, b) => b.totalCost - a.totalCost || b.totalTokens - a.totalTokens,
+  );
+  byChat.sort((a, b) => b.totalCost - a.totalCost || b.totalTokens - a.totalTokens);
+
+  return { byProject, byChat };
 }
 
 export function listMonthsInDb(db) {
@@ -642,7 +733,7 @@ export function seedAccountsFromLegacyOnce(db, legacySeed, cutoffMs = Date.now()
 
   db.exec('BEGIN');
   try {
-    const stmt = db.prepare(`
+    const acctSeedStmt = db.prepare(`
       INSERT INTO accounts (
         email, name, plan_name, tier_name, is_active, last_seen_ms,
         pools_json, credits_json, seed_calls, seed_input_tokens,
@@ -662,9 +753,44 @@ export function seedAccountsFromLegacyOnce(db, legacySeed, cutoffMs = Date.now()
         seed_output_tokens = MAX(seed_output_tokens, excluded.seed_output_tokens),
         seed_cost_usd = MAX(seed_cost_usd, excluded.seed_cost_usd)
     `);
+    const acctDailySeedStmt = db.prepare(`
+      INSERT INTO account_daily (email, date_key, model, calls, input_tokens, cache_read_tokens, cache_write_tokens, output_tokens)
+      VALUES (?, 'seed', ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(email, date_key, model) DO UPDATE SET
+        calls = MAX(calls, excluded.calls),
+        input_tokens = MAX(input_tokens, excluded.input_tokens),
+        cache_read_tokens = MAX(cache_read_tokens, excluded.cache_read_tokens),
+        cache_write_tokens = MAX(cache_write_tokens, excluded.cache_write_tokens),
+        output_tokens = MAX(output_tokens, excluded.output_tokens)
+    `);
+    const customPricing = getCustomPricingMap(db);
     for (const a of legacySeed.accounts) {
       const seed = a.seed || {};
-      stmt.run(
+      const models = Array.isArray(seed.models) ? seed.models : [];
+      let mCalls = 0;
+      let mIn = 0;
+      let mCacheRead = 0;
+      let mCacheWrite = 0;
+      let mOut = 0;
+      for (const m of models) {
+        if (!m?.model) continue;
+        mCalls += toInt(m.calls);
+        mIn += toInt(m.inputTokens);
+        mCacheRead += toInt(m.cacheReadTokens);
+        mCacheWrite += toInt(m.cacheWriteTokens);
+        mOut += toInt(m.outputTokens);
+        acctDailySeedStmt.run(
+          a.email,
+          m.model,
+          toInt(m.calls),
+          toInt(m.inputTokens),
+          toInt(m.cacheReadTokens),
+          toInt(m.cacheWriteTokens),
+          toInt(m.outputTokens),
+        );
+      }
+      const mCost = models.length > 0 ? calculateScopeCosts(models, customPricing).totals.totalCost : 0;
+      acctSeedStmt.run(
         a.email,
         a.name || a.email,
         a.planName || '',
@@ -673,15 +799,67 @@ export function seedAccountsFromLegacyOnce(db, legacySeed, cutoffMs = Date.now()
         toInt(a.lastSeenMs) || cutoffMs,
         JSON.stringify(a.resetPools || []),
         JSON.stringify(a.credits || []),
-        toInt(seed.calls),
-        toInt(seed.inputTokens),
-        toInt(seed.cacheReadTokens),
-        toInt(seed.cacheWriteTokens),
-        toInt(seed.outputTokens),
-        Number(seed.costUsd) || 0,
+        Math.max(0, toInt(seed.calls) - mCalls),
+        Math.max(0, toInt(seed.inputTokens) - mIn),
+        Math.max(0, toInt(seed.cacheReadTokens) - mCacheRead),
+        Math.max(0, toInt(seed.cacheWriteTokens) - mCacheWrite),
+        Math.max(0, toInt(seed.outputTokens) - mOut),
+        Math.max(0, (Number(seed.costUsd) || 0) - mCost),
       );
     }
     db.prepare("INSERT OR REPLACE INTO kv (k, v) VALUES ('legacy_accounts_imported_ms', ?)").run(String(cutoffMs));
+    db.prepare("INSERT OR REPLACE INTO kv (k, v) VALUES ('legacy_account_models_seeded_v1', '1')").run();
+    db.exec('COMMIT');
+    return true;
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+export function backfillLegacyAccountModelsOnce(db, legacySeed) {
+  if (db.prepare("SELECT 1 FROM kv WHERE k = 'legacy_account_models_seeded_v1'").get()) return false;
+  if (!legacySeed || !Array.isArray(legacySeed.accounts) || legacySeed.accounts.length === 0) return false;
+
+  const customPricing = getCustomPricingMap(db);
+  db.exec('BEGIN');
+  try {
+    const upsertModel = db.prepare(`
+      INSERT INTO account_daily (email, date_key, model, calls, input_tokens, cache_read_tokens, cache_write_tokens, output_tokens)
+      VALUES (?, 'seed', ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(email, date_key, model) DO UPDATE SET
+        calls = MAX(calls, excluded.calls),
+        input_tokens = MAX(input_tokens, excluded.input_tokens),
+        cache_read_tokens = MAX(cache_read_tokens, excluded.cache_read_tokens),
+        cache_write_tokens = MAX(cache_write_tokens, excluded.cache_write_tokens),
+        output_tokens = MAX(output_tokens, excluded.output_tokens)
+    `);
+    for (const a of legacySeed.accounts) {
+      const models = Array.isArray(a?.seed?.models) ? a.seed.models : [];
+      if (models.length === 0) continue;
+      let mCalls = 0, mIn = 0, mCr = 0, mCw = 0, mOut = 0;
+      for (const m of models) {
+        if (!m?.model) continue;
+        mCalls += toInt(m.calls);
+        mIn += toInt(m.inputTokens);
+        mCr += toInt(m.cacheReadTokens);
+        mCw += toInt(m.cacheWriteTokens);
+        mOut += toInt(m.outputTokens);
+        upsertModel.run(a.email, m.model, toInt(m.calls), toInt(m.inputTokens), toInt(m.cacheReadTokens), toInt(m.cacheWriteTokens), toInt(m.outputTokens));
+      }
+      const mCost = calculateScopeCosts(models, customPricing).totals.totalCost;
+      db.prepare(`
+        UPDATE accounts SET
+          seed_calls = MAX(0, seed_calls - ?),
+          seed_input_tokens = MAX(0, seed_input_tokens - ?),
+          seed_cache_read_tokens = MAX(0, seed_cache_read_tokens - ?),
+          seed_cache_write_tokens = MAX(0, seed_cache_write_tokens - ?),
+          seed_output_tokens = MAX(0, seed_output_tokens - ?),
+          seed_cost_usd = MAX(0, seed_cost_usd - ?)
+        WHERE email = ?
+      `).run(mCalls, mIn, mCr, mCw, mOut, mCost, a.email);
+    }
+    db.prepare("INSERT OR REPLACE INTO kv (k, v) VALUES ('legacy_account_models_seeded_v1', '1')").run();
     db.exec('COMMIT');
     return true;
   } catch (err) {
@@ -753,7 +931,8 @@ export function listAccountSnapshots(db) {
 
   const accounts = acctRows.map((a) => {
     const liveRows = byEmailRows.get(a.email) || [];
-    const liveCost = calculateScopeCosts(liveRows, customPricing).totals;
+    const liveCalc = calculateScopeCosts(liveRows, customPricing);
+    const liveCost = liveCalc.totals;
 
     const inputTokens = toInt(a.seed_input_tokens) + liveCost.inputTokens;
     const cacheReadTokens = toInt(a.seed_cache_read_tokens) + liveCost.cacheReadTokens;
@@ -781,6 +960,7 @@ export function listAccountSnapshots(db) {
       lastSeenMs: toInt(a.last_seen_ms),
       resetPools: Array.isArray(resetPools) ? resetPools : [],
       credits: Array.isArray(credits) ? credits : [],
+      byModel: liveCalc.byModel,
       usage: {
         calls,
         inputTokens,
@@ -819,4 +999,150 @@ export function removeAccountSnapshot(db, email) {
     db.exec('ROLLBACK');
     throw err;
   }
+}
+
+export function getCostPrefs(db) {
+  const row = db.prepare("SELECT v FROM kv WHERE k = 'cost_prefs'").get();
+  if (!row) return { currency: 'USD', fxRate: 1, monthlyFee: 0 };
+  try {
+    const parsed = JSON.parse(row.v);
+    return {
+      currency: String(parsed?.currency || 'USD').toUpperCase().slice(0, 6),
+      fxRate: Number(parsed?.fxRate) > 0 ? Number(parsed.fxRate) : 1,
+      monthlyFee: Number(parsed?.monthlyFee) >= 0 ? Number(parsed.monthlyFee) : 0,
+    };
+  } catch {
+    return { currency: 'USD', fxRate: 1, monthlyFee: 0 };
+  }
+}
+
+export function saveCostPrefs(db, { currency = 'USD', fxRate = 1, monthlyFee = 0 } = {}) {
+  const next = {
+    currency: String(currency || 'USD').trim().toUpperCase().slice(0, 6) || 'USD',
+    fxRate: Number(fxRate) > 0 ? Number(fxRate) : 1,
+    monthlyFee: Number(monthlyFee) >= 0 ? Number(monthlyFee) : 0,
+  };
+  db.prepare("INSERT OR REPLACE INTO kv (k, v) VALUES ('cost_prefs', ?)").run(JSON.stringify(next));
+  return next;
+}
+
+export function queryHeatmapSql(db, { weeks = 16, sourceFilter = 'all', nowMs = Date.now() } = {}) {
+  const clampedWeeks = Math.max(4, Math.min(52, Number(weeks) || 16));
+  const cleanSource = ['all', 'app', 'cli'].includes(sourceFilter) ? sourceFilter : 'all';
+  const customPricing = getCustomPricingMap(db);
+
+  let sql = `
+    SELECT d.conv_id, d.date_key, d.month_key, d.model, d.calls,
+           d.input_tokens, d.cache_read_tokens, d.cache_write_tokens, d.output_tokens,
+           c.app_source
+    FROM conv_daily d
+    LEFT JOIN conversations c ON c.conv_id = d.conv_id
+  `;
+  const rows = db.prepare(sql).all();
+  const filteredRows = rows.filter((r) => {
+    const src = String(r.app_source || '').toLowerCase();
+    const isCli = src === 'agy' || src.includes('cli');
+    if (cleanSource === 'cli') return isCli;
+    if (cleanSource === 'app') return !isCli;
+    return true;
+  });
+
+  const dayMap = new Map();
+  const todayKey = toLocalDateKey(new Date(nowMs).toISOString());
+  const thisMonthKey = todayKey.slice(0, 7);
+  const thisYearKey = todayKey.slice(0, 4);
+  const weekCutoff = toLocalDateKey(new Date(nowMs - 6 * 86_400_000).toISOString());
+
+  let weekStats = { tokens: 0, cost: 0, calls: 0 };
+  let monthStats = { tokens: 0, cost: 0, calls: 0 };
+  let yearStats = { tokens: 0, cost: 0, calls: 0 };
+  let allStats = { tokens: 0, cost: 0, calls: 0 };
+
+  for (const r of filteredRows) {
+    const calc = calculateScopeCosts([{
+      dateKey: r.date_key,
+      model: r.model,
+      calls: toInt(r.calls),
+      inputTokens: toInt(r.input_tokens),
+      cacheReadTokens: toInt(r.cache_read_tokens),
+      cacheWriteTokens: toInt(r.cache_write_tokens),
+      outputTokens: toInt(r.output_tokens),
+    }], customPricing).totals;
+
+    allStats.tokens += calc.totalTokens;
+    allStats.cost += calc.totalCost;
+    allStats.calls += calc.calls;
+    if (r.date_key >= weekCutoff) {
+      weekStats.tokens += calc.totalTokens;
+      weekStats.cost += calc.totalCost;
+      weekStats.calls += calc.calls;
+    }
+    if (r.month_key === thisMonthKey) {
+      monthStats.tokens += calc.totalTokens;
+      monthStats.cost += calc.totalCost;
+      monthStats.calls += calc.calls;
+    }
+    if (r.date_key.startsWith(thisYearKey)) {
+      yearStats.tokens += calc.totalTokens;
+      yearStats.cost += calc.totalCost;
+      yearStats.calls += calc.calls;
+    }
+
+    let bucket = dayMap.get(r.date_key);
+    if (!bucket) {
+      bucket = { date: r.date_key, totalTokens: 0, totalCost: 0, calls: 0, sessions: new Set() };
+      dayMap.set(r.date_key, bucket);
+    }
+    bucket.totalTokens += calc.totalTokens;
+    bucket.totalCost += calc.totalCost;
+    bucket.calls += calc.calls;
+    if (r.conv_id) bucket.sessions.add(r.conv_id);
+  }
+
+  // Active & Longest Streaks up to today
+  const activeDates = [...dayMap.keys()].filter((d) => dayMap.get(d).calls > 0).sort();
+  let longestStreak = 0;
+  let run = 0;
+  let prevDayMs = null;
+  for (const dk of activeDates) {
+    const ms = Date.parse(`${dk}T00:00:00Z`);
+    if (prevDayMs !== null && Math.round((ms - prevDayMs) / 86_400_000) === 1) {
+      run += 1;
+    } else {
+      run = 1;
+    }
+    if (run > longestStreak) longestStreak = run;
+    prevDayMs = ms;
+  }
+
+  let currentStreak = 0;
+  for (let offset = 0; offset < 365; offset++) {
+    const k = toLocalDateKey(new Date(nowMs - offset * 86_400_000).toISOString());
+    if (dayMap.get(k)?.calls > 0) {
+      currentStreak += 1;
+    } else if (offset === 0) {
+      continue; // allow today not yet active while preserving yesterday streak
+    } else {
+      break;
+    }
+  }
+
+  const dailySummary = {};
+  for (const [dk, b] of dayMap.entries()) {
+    dailySummary[dk] = {
+      date: dk,
+      totalTokens: b.totalTokens,
+      totalCost: b.totalCost,
+      calls: b.calls,
+      sessions: b.sessions.size,
+    };
+  }
+
+  return {
+    weeks: clampedWeeks,
+    sourceFilter: cleanSource,
+    streaks: { current: currentStreak, longest: longestStreak },
+    periods: { week: weekStats, month: monthStats, year: yearStats, all: allStats },
+    daily: dailySummary,
+  };
 }

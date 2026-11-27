@@ -11,11 +11,13 @@ import {
 } from '../pricing.mjs';
 import { computeContextBreakdown } from '../breakdown.mjs';
 import { extractAICredits } from '../quotas.mjs';
-import { extractActiveAccountSnapshot, readLegacyMonitorSeed } from '../accounts.mjs';
+import { parseTranscriptText, enrichSummaryWithSpeed } from '../lib.mjs';
+import { extractActiveAccountSnapshot, readLegacyMonitorSeed, extractPerModelQuotas } from '../accounts.mjs';
 import {
   openContextDb,
   scanTranscriptIncremental,
   queryScopeRows,
+  buildProjectAndChatBreakdowns,
   listMonthsInDb,
   exportMonthArchive,
   importMonthArchive,
@@ -24,9 +26,13 @@ import {
   getCustomPricingMap,
   deleteCustomPricingEntry,
   seedAccountsFromLegacyOnce,
+  backfillLegacyAccountModelsOnce,
   upsertActiveAccountSnapshot,
   listAccountSnapshots,
   removeAccountSnapshot,
+  getCostPrefs,
+  saveCostPrefs,
+  queryHeatmapSql,
 } from '../db.mjs';
 
 test('pricing normalizes placeholders, calculates scope totals, and honors overrides', () => {
@@ -415,4 +421,161 @@ test('multi-account extractor, legacy seed once, post-cutoff live token attribut
   assert.equal(removeAccountSnapshot(db, 'parvin@example.com'), false);
   assert.equal(removeAccountSnapshot(db, 'mostakim@example.com'), true);
   assert.equal(listAccountSnapshots(db).accounts.length, 1);
+});
+
+test('phase 3 pricing aliases, compactions, per-model quotas, project/chat breakdown, and heatmap analytics', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'cm-phase3-'));
+  const db = openContextDb(join(dir, 'context.db'));
+  t.after(() => {
+    try { db.close(); } catch {}
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // 1. M318 & orchestrator alias pricing resolution
+  assert.equal(normalizeModelKey('MODEL_PLACEHOLDER_M318'), 'gemini-3.8-flash');
+  assert.equal(normalizeModelKey('gemini-pro-orchestrator-neon'), 'gemini-4-neon');
+  assert.equal(resolveModelPricing('MODEL_PLACEHOLDER_M318').input, 0.75);
+  assert.equal(resolveModelPricing('gemini-pro-orchestrator-neon').output, 15.0);
+
+  // 2. Transcript compaction drop detection (>= 25K) + native 1M limit
+  const sampleLog = [
+    JSON.stringify({ type: 'USER_INPUT', step_index: 1, content: 'start' }),
+    JSON.stringify({ type: 'PLANNER_RESPONSE', step_index: 2, input_tokens: 10_000, cache_read_tokens: 190_000, output_tokens: 500 }),
+    JSON.stringify({ type: 'PLANNER_RESPONSE', step_index: 3, input_tokens: 12_000, cache_read_tokens: 60_000, output_tokens: 400 }),
+  ].join('\n');
+  const parsed = parseTranscriptText(sampleLog);
+  assert.equal(parsed.compactions.length, 1);
+  assert.equal(parsed.compactions[0].beforeTokens, 200_000);
+  assert.equal(parsed.compactions[0].afterTokens, 72_000);
+  assert.equal(parsed.compactions[0].savedTokens, 128_000);
+
+  const enriched = enrichSummaryWithSpeed(
+    parsed,
+    new Map([[3, { model: 'gemini-4-hydrogen', maxContextTokens: 512_000 }]]),
+  );
+  assert.equal(enriched.nativeLimitTokens, 1_048_576);
+
+  // 3. Dedicated per-model quotas (5h from clientModelConfigs + 7d from summary)
+  const perModel = extractPerModelQuotas(
+    {
+      userStatus: {
+        cascadeModelConfigData: {
+          clientModelConfigs: [
+            { label: 'Gemini 4 Hydrogen (High)', modelOrAlias: { model: 'gemini-4-hydrogen' }, quotaInfo: { remainingFraction: 0.68, resetTime: '2026-11-27T16:00:00Z' } },
+            { label: 'Claude Opus 4.6', modelId: 'claude-opus-4-6', quotaInfo: { remainingFraction: 0.9, resetTime: '2026-11-27T17:00:00Z' } },
+          ],
+        },
+      },
+    },
+    {
+      pools: [
+        { pool: 'gemini', weekly: { remainingPct: 82, resetTime: '2026-12-03T00:00:00Z', resetCountdown: '5d 12h' } },
+        { pool: 'premium', weekly: { remainingPct: 95, resetTime: '2026-12-03T00:00:00Z', resetCountdown: '5d 12h' } },
+      ],
+    },
+    Date.parse('2026-11-27T12:00:00Z'),
+  );
+  assert.equal(perModel.length, 2);
+  assert.equal(perModel[0].fiveHour.remainingPct, 68);
+  assert.equal(perModel[0].weekly.remainingPct, 82);
+  assert.equal(perModel[1].family, 'premium');
+  assert.equal(perModel[1].weekly.remainingPct, 95);
+
+  // 4. SQLite Cost Prefs (Currency FX & Monthly Plan Fee)
+  assert.deepEqual(getCostPrefs(db), { currency: 'USD', fxRate: 1, monthlyFee: 0 });
+  const savedPrefs = saveCostPrefs(db, { currency: 'bdt', fxRate: 120, monthlyFee: 20 });
+  assert.deepEqual(savedPrefs, { currency: 'BDT', fxRate: 120, monthlyFee: 20 });
+  assert.deepEqual(getCostPrefs(db), { currency: 'BDT', fxRate: 120, monthlyFee: 20 });
+
+  // 5. Project & Chat Breakdowns + Heatmap SQL Analytics (App vs CLI + Streaks)
+  const nowMs = Date.parse('2026-11-27T12:00:00Z');
+  const day1 = new Date(nowMs - 86_400_000).toISOString();
+  const day2 = new Date(nowMs).toISOString();
+  const tpApp = join(dir, 'app.jsonl');
+  const tpCli = join(dir, 'cli.jsonl');
+  writeFileSync(
+    tpApp,
+    JSON.stringify({ type: 'PLANNER_RESPONSE', step_index: 1, created_at: day1, model: 'gemini-4-hydrogen', input_tokens: 1_000_000, cache_read_tokens: 0, output_tokens: 100_000 }) + '\n',
+  );
+  writeFileSync(
+    tpCli,
+    JSON.stringify({ type: 'PLANNER_RESPONSE', step_index: 1, created_at: day2, model: 'claude-opus-4-6', input_tokens: 500_000, cache_read_tokens: 0, output_tokens: 50_000 }) + '\n',
+  );
+  scanTranscriptIncremental(db, {
+    convId: 'conv-app-1',
+    transcriptPath: tpApp,
+    title: 'App Chat',
+    workspaceUri: 'file:///C:/Projects/Alpha',
+    appSource: 'antigravity',
+  });
+  scanTranscriptIncremental(db, {
+    convId: 'conv-cli-1',
+    transcriptPath: tpCli,
+    title: 'CLI Chat',
+    workspaceUri: 'file:///C:/Projects/Beta',
+    appSource: 'agy',
+  });
+
+  const allScope = queryScopeRows(db, { scope: 'all', nowMs });
+  const { byProject, byChat } = buildProjectAndChatBreakdowns(allScope.rows, {});
+  assert.equal(byProject.length, 2);
+  assert.equal(byChat.length, 2);
+  assert.equal(byProject[0].chats.length, 1);
+
+  const hmAll = queryHeatmapSql(db, { weeks: 16, sourceFilter: 'all', nowMs });
+  const hmCli = queryHeatmapSql(db, { weeks: 16, sourceFilter: 'cli', nowMs });
+  const hmApp = queryHeatmapSql(db, { weeks: 16, sourceFilter: 'app', nowMs });
+  assert.equal(hmAll.streaks.current, 2);
+  assert.equal(hmAll.streaks.longest, 2);
+  assert.equal(hmAll.periods.all.calls, 2);
+  assert.equal(hmCli.periods.all.calls, 1);
+  assert.equal(hmApp.periods.all.calls, 1);
+  assert.ok(hmAll.periods.year.cost > 0);
+
+  // 6. Legacy per-account model seed backfill without double-counting totals
+  const acctTp = join(dir, 'acct-legacy.json');
+  writeFileSync(
+    acctTp,
+    JSON.stringify({
+      global: {
+        accountSnapshots: [
+          { email: 'user@example.com', name: 'User One', tierName: 'Google AI Pro', isActive: true },
+        ],
+        dailyLedgerState: {
+          accounts: {
+            'user@example.com': {
+              totalCalls: 10,
+              totalInputTokens: 1000,
+              totalCacheRead: 2000,
+              totalOutputTokens: 300,
+              totalEstimatedCost: 0.5,
+              modelStats: {
+                'gemini-4-hydrogen': { calls: 6, inputTokens: 600, cacheReadTokens: 1200, outputTokens: 200 },
+                'claude-opus-4-6': { calls: 4, inputTokens: 400, cacheReadTokens: 800, outputTokens: 100 },
+              },
+            },
+          },
+        },
+      },
+    }),
+  );
+  const legacySeed = readLegacyMonitorSeed(acctTp);
+  assert.equal(legacySeed.accounts[0].seed.models.length, 2);
+  assert.equal(seedAccountsFromLegacyOnce(db, legacySeed, nowMs), true);
+  // Fresh seed already records legacy_account_models_seeded_v1 so backfill is a no-op
+  assert.equal(backfillLegacyAccountModelsOnce(db, legacySeed), false);
+
+  // Simulate Phase 2 DB upgrade (only seed_* columns populated, no account_daily 'seed' rows yet)
+  db.exec(`
+    DELETE FROM kv WHERE k = 'legacy_account_models_seeded_v1';
+    DELETE FROM account_daily WHERE email = 'user@example.com' AND date_key = 'seed';
+    UPDATE accounts SET seed_calls = 10, seed_input_tokens = 1000, seed_cache_read_tokens = 2000, seed_output_tokens = 300, seed_cost_usd = 0.5 WHERE email = 'user@example.com';
+  `);
+  assert.equal(backfillLegacyAccountModelsOnce(db, legacySeed), true);
+  assert.equal(backfillLegacyAccountModelsOnce(db, legacySeed), false);
+
+  const acctList = listAccountSnapshots(db);
+  assert.equal(acctList.accounts[0].usage.totalTokens, 3300);
+  assert.equal(acctList.accounts[0].byModel.length, 2);
+  assert.equal(acctList.summary.totalTokens, 3300);
 });

@@ -158,7 +158,7 @@
     if (!el || el.nodeType !== 1) return false;
     const tag = el.tagName;
     if (tag === 'SCRIPT' || tag === 'STYLE') return true;
-    if (el.closest?.('#repo-line, #cm-lang-toggle, #quotas-card, #cm-sections-drawer, #cm-sections-btn, #switcher-bar, #scope-cost-card, #breakdown-card, #view-cost, #view-accounts, #cm-accounts-pill')) return true;
+    if (el.closest?.('#repo-line, #cm-lang-toggle, #quotas-card, #cm-sections-drawer, #cm-sections-btn, #switcher-bar, #scope-cost-card, #breakdown-card, #view-cost, #view-accounts, #cm-accounts-pill, #cm-gauge-extra, #cm-hm-analytics')) return true;
     if (el.classList?.contains('turn-prompt')) return true;
     return false;
   }

@@ -2,6 +2,7 @@
   const REFRESH_MS = 30_000;
   let lastData = null;
   let loading = false;
+  let expandedAcctModels = new Set();
 
   function getLang() {
     return globalThis.CM_I18N?.getLang?.() || 'en';
@@ -33,12 +34,17 @@
     return `$${v.toFixed(2)}`;
   }
 
+  function fmtRateStr(rate) {
+    if (!rate) return '';
+    return `$${rate.input}/$${rate.cacheRead}/$${rate.output}`;
+  }
+
   function fmtCountdown(resetIso, nowMs, lang) {
     if (!resetIso) return '';
     const target = Date.parse(resetIso);
     if (!Number.isFinite(target)) return '';
     const diffMs = target - nowMs;
-    if (diffMs <= 0) return null; // ready / elapsed
+    if (diffMs <= 0) return null;
     const totalMin = Math.max(1, Math.round(diffMs / 60_000));
     const d = Math.floor(totalMin / 1440);
     const h = Math.floor((totalMin % 1440) / 60);
@@ -46,6 +52,10 @@
     if (d > 0) return lang === 'en' ? `${d}d ${h}h` : `${d}天${h}时`;
     if (h > 0) return lang === 'en' ? `${h}h ${m}m` : `${h}时${m}分`;
     return lang === 'en' ? `${m}m` : `${m}分`;
+  }
+
+  function isEnabled(key) {
+    return !globalThis.CM_SECTIONS || globalThis.CM_SECTIONS.isEnabled(key);
   }
 
   async function apiCall(path, opts = {}) {
@@ -118,6 +128,81 @@
     `;
   }
 
+  function renderWindowBar(winTag, w, lang) {
+    if (!w || typeof w.remainingPct !== 'number') {
+      return `<div class="mq-win"><span class="mq-win-tag">${esc(winTag)}</span><span class="mq-win-empty">—</span></div>`;
+    }
+    const pct = Math.max(0, Math.min(100, Math.round(w.remainingPct)));
+    const tone = pct <= 20 ? ' is-danger' : pct <= 45 ? ' is-warn' : '';
+    const cd = w.resetCountdown ? `${w.resetCountdown}` : (lang === 'en' ? 'Full' : '满额');
+    return `
+      <div class="mq-win">
+        <div class="mq-win-top">
+          <span class="mq-win-tag">${esc(winTag)}</span>
+          <span class="mq-win-meta">${esc(cd)} · <strong>${pct}%</strong></span>
+        </div>
+        <div class="q-track"><div class="q-fill${tone}" style="width:${pct}%"></div></div>
+      </div>
+    `;
+  }
+
+  function renderAllModelsCard(allModels, totals, lang) {
+    if (!isEnabled('accountsModels')) return '';
+    const models = Array.isArray(allModels) ? allModels : [];
+    const listHtml = models.length === 0
+      ? `<div class="sc-empty">${lang === 'en' ? 'No model usage recorded yet.' : '暂无模型用量记录。'}</div>`
+      : models.map((m) => `
+          <div class="sc-model-row">
+            <div class="sc-model-left">
+              <span class="sc-model-name" title="${esc(m.modelKey)}">${esc(m.label)}</span>
+              <span class="sc-model-meta">${m.calls} ${lang === 'en' ? 'calls' : '次'}${m.rate ? ` · ${fmtRateStr(m.rate)}/1M` : ''}</span>
+            </div>
+            <div class="sc-val-pills">
+              <span class="cm-tok-pill">${fmtTok(m.totalTokens)}</span>
+              <span class="cm-cost-pill">${m.priced ? fmtUsd(m.totalCost) : (lang === 'en' ? 'No rate' : '无单价')}</span>
+            </div>
+          </div>
+        `).join('');
+
+    return `
+      <section id="acct-all-models-card" class="card">
+        <div class="section-head">
+          <span class="section-title">${lang === 'en' ? `All Models & API Rates (${models.length})` : `全模型用量与 API 费率 (${models.length})`}</span>
+          <div class="sc-val-pills">
+            <span class="cm-tok-pill">${fmtTok(totals?.totalTokens || 0)}</span>
+            <span class="cm-cost-pill">${fmtUsd(totals?.totalCost || 0)}</span>
+          </div>
+        </div>
+        <div class="sc-subcard">${listHtml}</div>
+      </section>
+    `;
+  }
+
+  function renderPerModelQuotasCard(modelQuotas, lang) {
+    if (!isEnabled('accountsQuotas')) return '';
+    const list = Array.isArray(modelQuotas) ? modelQuotas : [];
+    const body = list.length === 0
+      ? `<div class="sc-empty">${lang === 'en' ? 'Per-model quota data unavailable from LanguageServer.' : '暂未获取到单模型配额明细。'}</div>`
+      : `<div class="mq-list">${list.map((m) => `
+          <div class="mq-row">
+            <div class="mq-label" title="${esc(m.modelId || m.label)}">${esc(m.label)}</div>
+            <div class="mq-bars">
+              ${renderWindowBar('5h', m.fiveHour, lang)}
+              ${renderWindowBar('7d', m.weekly, lang)}
+            </div>
+          </div>
+        `).join('')}</div>`;
+
+    return `
+      <section id="acct-model-quotas-card" class="card">
+        <div class="section-head">
+          <span class="section-title">${lang === 'en' ? `Per-Model Quotas (5h & 7d) (${list.length})` : `单模型 5h / 7d 剩余额度 (${list.length})`}</span>
+        </div>
+        ${body}
+      </section>
+    `;
+  }
+
   function render() {
     updateHeaderPill();
     const container = document.getElementById('view-accounts');
@@ -126,6 +211,9 @@
 
     const summary = lastData?.summary || { count: 0, totalTokens: 0, totalCalls: 0, totalCostUsd: 0 };
     const accounts = Array.isArray(lastData?.accounts) ? lastData.accounts : [];
+    const allModels = Array.isArray(lastData?.allModels) ? lastData.allModels : [];
+    const allModelsTotals = lastData?.allModelsTotals || { totalTokens: 0, totalCost: 0 };
+    const modelQuotas = Array.isArray(lastData?.modelQuotas) ? lastData.modelQuotas : [];
     const nowMs = Date.now();
 
     const headerCard = `
@@ -136,12 +224,12 @@
         </div>
         <div class="acct-kpi-grid">
           <div class="acct-kpi">
-            <span class="acct-kpi-k">${lang === 'en' ? 'All Accounts Tokens' : '全部账号总 Token'}</span>
-            <strong class="acct-kpi-v">${fmtTok(summary.totalTokens)}</strong>
+            <span class="acct-kpi-k">${lang === 'en' ? 'Accounts Ledger Tokens' : '多账号已记录 Token'}</span>
+            <span class="cm-tok-pill">${fmtTok(summary.totalTokens)}</span>
           </div>
           <div class="acct-kpi">
-            <span class="acct-kpi-k">${lang === 'en' ? 'Calls · Est. Value' : '调用 · 估算等值'}</span>
-            <strong class="acct-kpi-v">${summary.totalCalls} · ${fmtUsd(summary.totalCostUsd)}</strong>
+            <span class="acct-kpi-k">${lang === 'en' ? 'API Rate Value' : '等效 API 费用'}</span>
+            <span class="cm-cost-pill">${fmtUsd(summary.totalCostUsd)}</span>
           </div>
         </div>
       </section>
@@ -157,11 +245,40 @@
         const u = a.usage || {};
         const planText = a.tierName || a.planName || '';
         const credits = Array.isArray(a.credits) ? a.credits : [];
+        const acctModels = Array.isArray(a.byModel) ? a.byModel : [];
+        const isModelsOpen = expandedAcctModels.has(a.email);
+
         const creditsHtml = credits.length > 0
           ? `<div class="acct-credits">${credits.map((c) => `<span class="q-credit-pill">${esc(String(c.creditType).replace(/_/g, ' ').toLowerCase())}: <strong>${Number(c.amount || 0).toLocaleString('en-US')}</strong></span>`).join('')}</div>`
           : '';
         const poolsHtml = Array.isArray(a.resetPools) && a.resetPools.length > 0
           ? `<div class="acct-pools">${a.resetPools.map((p) => renderPoolRow(p, nowMs, lang)).join('')}</div>`
+          : '';
+
+        const acctModelsHtml = acctModels.length > 0
+          ? `
+            <div class="acct-models-wrap">
+              <button type="button" class="ghost-btn sc-btn-xs${isModelsOpen ? ' is-on' : ''}" data-acct-models-toggle="${esc(a.email)}">
+                ${lang === 'en' ? `Models (${acctModels.length})` : `模型明细 (${acctModels.length})`}
+              </button>
+              ${
+                isModelsOpen
+                  ? `<div class="sc-subcard">${acctModels.map((m) => `
+                      <div class="sc-model-row">
+                        <div class="sc-model-left">
+                          <span class="sc-model-name">${esc(m.label)}</span>
+                          <span class="sc-model-meta">${m.calls} ${lang === 'en' ? 'calls' : '次'}${m.rate ? ` · ${fmtRateStr(m.rate)}/1M` : ''}</span>
+                        </div>
+                        <div class="sc-val-pills">
+                          <span class="cm-tok-pill">${fmtTok(m.totalTokens)}</span>
+                          <span class="cm-cost-pill">${m.priced ? fmtUsd(m.totalCost) : (lang === 'en' ? 'No rate' : '无单价')}</span>
+                        </div>
+                      </div>
+                    `).join('')}</div>`
+                  : ''
+              }
+            </div>
+          `
           : '';
 
         return `
@@ -189,22 +306,30 @@
 
             <div class="acct-usage-box">
               <div class="acct-usage-main">
-                <span class="acct-usage-label">${lang === 'en' ? 'Total Tokens Used' : '累计 Token 用量'}</span>
-                <strong class="acct-usage-tok">${fmtTok(u.totalTokens || 0)}</strong>
+                <div class="sc-val-pills">
+                  <span class="cm-tok-pill">${lang === 'en' ? 'Tokens' : 'Token'}: ${fmtTok(u.totalTokens || 0)}</span>
+                  <span class="cm-cost-pill">${lang === 'en' ? 'API Rate' : 'API 等值'}: ${fmtUsd(u.estimatedCostUsd || 0)}</span>
+                </div>
               </div>
               <div class="acct-usage-sub">
-                ${u.calls || 0} ${lang === 'en' ? 'calls' : '次'} · ${lang === 'en' ? 'In' : '输入'} ${fmtTok(u.inputTokens || 0)} · ${lang === 'en' ? 'Cache' : '缓存'} ${fmtTok(u.cacheReadTokens || 0)} · ${lang === 'en' ? 'Out' : '输出'} ${fmtTok(u.outputTokens || 0)} · ${fmtUsd(u.estimatedCostUsd || 0)}
+                ${u.calls || 0} ${lang === 'en' ? 'calls' : '次'} · ${lang === 'en' ? 'In' : '输入'} ${fmtTok(u.inputTokens || 0)} · ${lang === 'en' ? 'Cache' : '缓存'} ${fmtTok(u.cacheReadTokens || 0)} · ${lang === 'en' ? 'Out' : '输出'} ${fmtTok(u.outputTokens || 0)}
               </div>
             </div>
 
             ${creditsHtml}
+            ${acctModelsHtml}
             ${poolsHtml}
           </section>
         `;
       }).join('');
     }
 
-    container.innerHTML = `${headerCard}${listHtml}`;
+    container.innerHTML = `
+      ${headerCard}
+      ${listHtml}
+      ${renderAllModelsCard(allModels, allModelsTotals, lang)}
+      ${renderPerModelQuotasCard(modelQuotas, lang)}
+    `;
   }
 
   async function refresh(force = false) {
@@ -215,7 +340,12 @@
     try {
       lastData = await apiCall(`/api/accounts${force ? '?force=1' : ''}`);
     } catch {
-      lastData = lastData || { accounts: [], summary: { count: 0, totalTokens: 0, totalCalls: 0, totalCostUsd: 0 } };
+      lastData = lastData || {
+        accounts: [],
+        allModels: [],
+        modelQuotas: [],
+        summary: { count: 0, totalTokens: 0, totalCalls: 0, totalCostUsd: 0 },
+      };
     } finally {
       loading = false;
       render();
@@ -228,6 +358,16 @@
       view.addEventListener('click', async (e) => {
         if (e.target.closest('#cm-acct-refresh')) {
           refresh(true);
+          return;
+        }
+        const mToggle = e.target.closest('[data-acct-models-toggle]');
+        if (mToggle) {
+          const email = mToggle.dataset.acctModelsToggle;
+          if (email) {
+            if (expandedAcctModels.has(email)) expandedAcctModels.delete(email);
+            else expandedAcctModels.add(email);
+            render();
+          }
           return;
         }
         const rm = e.target.closest('[data-remove-email]');
@@ -250,9 +390,9 @@
     globalThis.CM_I18N?.onChange?.(() => render());
     globalThis.CM_SECTIONS?.onChange?.((p) => {
       if (p.accountsTab && !lastData) refresh(false);
+      else render();
     });
 
-    // Initial lightweight fetch so header pill shows active account name + tokens at a glance
     refresh(false);
     setInterval(() => {
       const tabAccts = document.getElementById('tab-accounts');

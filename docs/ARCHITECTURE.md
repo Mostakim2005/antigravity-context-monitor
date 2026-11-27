@@ -6,12 +6,14 @@
 * **Backend Modules (`Code Anchors`):**
   * `sidecars/context_monitor/main.mjs :: getConversationsSnapshot` — `GetAllCascadeTrajectories` subagent/main detection and switcher feed.
   * `sidecars/context_monitor/main.mjs :: getBreakdownSnapshot` — `GetCascadeTrajectoryGeneratorMetadata` + `GetCascadeTrajectorySteps` -> `computeContextBreakdown`.
-  * `sidecars/context_monitor/main.mjs :: getScopeSnapshot` — Incremental sync + `queryScopeRows` + `calculateScopeCosts`.
-  * `sidecars/context_monitor/main.mjs :: getAccountsSnapshot` — Multi-account quota snapshot + cumulative token attribution (`/api/accounts`).
+  * `sidecars/context_monitor/main.mjs :: getScopeSnapshot` — Incremental sync + `queryScopeRows` + `calculateScopeCosts` + `buildProjectAndChatBreakdowns` + `getCostPrefs`.
+  * `sidecars/context_monitor/main.mjs :: getAccountsSnapshot` — Multi-account quota snapshot + cumulative per-account/all-model attribution + `extractPerModelQuotas` (`/api/accounts`).
   * `sidecars/context_monitor/main.mjs :: getQuotasSnapshot` — `RetrieveUserQuotaSummary` + `GetUserStatus` + `extractAICredits` + `recordQuotaSamplesAndComputeRunway`.
-  * `sidecars/context_monitor/accounts.mjs :: extractActiveAccountSnapshot` — Extracts signed-in account metadata, pool reset timers, and one-time legacy seed.
+  * `sidecars/context_monitor/lib.mjs :: parseTranscriptText` & `enrichSummaryWithSpeed` — Transcript step aggregation, compaction drop detection, and `nativeLimitTokens` (`1M` vs `512K`).
+  * `sidecars/context_monitor/accounts.mjs :: extractActiveAccountSnapshot` & `extractPerModelQuotas` — Signed-in account metadata, pool reset timers, per-model `5h/7d` windows, and one-time legacy seed.
   * `sidecars/context_monitor/db.mjs :: scanTranscriptIncremental` — Byte-offset `transcript.jsonl` incremental reader with truncation recovery, account token attribution, and frozen-month skip (`archived = 1`).
-  * `sidecars/context_monitor/db.mjs :: exportMonthArchive` — Exports portable monthly JSON bundle and freezes historical conversations.
+  * `sidecars/context_monitor/db.mjs :: buildProjectAndChatBreakdowns` & `queryHeatmapSql` — Project/conversation tree cost rollup, SQLite `cost_prefs`, and heatmap analytics (tokens/USD, streaks, App vs CLI filter).
+  * `sidecars/context_monitor/db.mjs :: exportMonthArchive` & `backfillLegacyAccountModelsOnce` — Exports/freezes monthly JSON bundles and backfills per-model legacy account seeds without double-counting.
   * `sidecars/context_monitor/pricing.mjs :: calculateScopeCosts` — Published API rate attribution + user custom overrides.
   * `sidecars/context_monitor/breakdown.mjs :: computeContextBreakdown` — 9-category prompt context classification + Top 5 consumer extraction.
 
@@ -40,6 +42,6 @@ flowchart LR
 ### [DECISION: Node-Sqlite-Now-Go-Backend-Future] | Aliases: go migration, ram optimization, roadmap
 > **1-Line Summary:** `[DECIDED BY: HUMAN]` Keep the lightweight zero-dependency Node.js (`node:sqlite`) backend for immediate Antigravity portability (~80–95 MB RSS), with a clean option to swap the HTTP backend to a compiled Go binary (~8–18 MB RSS) in the future without altering `public/`.
 
-* **Rationale:** Every UI module (`public/*.js`, `public/styles.css`, `public/index.html`) interacts exclusively through documented JSON endpoints (`/api/context`, `/api/quotas`, `/api/scope`, `/api/breakdown`, `/api/conversations`, `/api/pricing`, `/api/archive/export`, `/api/archive/import`, `/api/heatmap`). Replacing `main.mjs` + `.mjs` libraries with a single Go executable later requires zero frontend or `app.asar` changes.
+* **Rationale:** Every UI module (`public/*.js`, `public/styles.css`, `public/index.html`) interacts exclusively through documented JSON endpoints (`/api/context`, `/api/quotas`, `/api/accounts`, `/api/scope`, `/api/cost-prefs`, `/api/breakdown`, `/api/conversations`, `/api/pricing`, `/api/archive/export`, `/api/archive/import`, `/api/heatmap`, `/api/heatmap/analytics`). Replacing `main.mjs` + `.mjs` libraries with a single Go executable later requires zero frontend or `app.asar` changes.
 * **Links:** `[FEATURE: Parity-Inventory-Ledger]` (`docs/PORTING_MATRIX.md`)
-* **Verified By:** `sidecars/context_monitor/test/features.test.mjs :: db incremental scanning, scope queries, monthly freeze/archive import, quota runway, and custom pricing`
+* **Verified By:** `sidecars/context_monitor/test/features.test.mjs :: phase 3 pricing aliases, compactions, per-model quotas, project/chat breakdown, and heatmap analytics`

@@ -1,0 +1,20 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run unit and i18n tests
+        run: node --test sidecars/context_monitor/test/*.test.mjs
+      - name: Check sidecar syntax
+        run: node --check sidecars/context_monitor/main.mjs && node --check sidecars/context_monitor/lib.mjs && node --check sidecars/context_monitor/public/i18n.js

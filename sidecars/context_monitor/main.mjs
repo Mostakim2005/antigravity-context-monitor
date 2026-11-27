@@ -23,6 +23,7 @@ const PUBLIC_DIR = join(__dirname, 'public');
 
 const STATIC = {
   '/styles.css': ['styles.css', 'text/css; charset=utf-8'],
+  '/i18n.js': ['i18n.js', 'application/javascript; charset=utf-8'],
   '/app.js': ['app.js', 'application/javascript; charset=utf-8'],
 };
 

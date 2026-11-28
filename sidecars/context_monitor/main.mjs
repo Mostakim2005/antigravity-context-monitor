@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
@@ -353,6 +354,80 @@ for (const [route, [file, contentType]] of Object.entries(STATIC)) {
     'GET',
   );
 }
+
+function copyViaProcess(cmd, args, text) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, {
+      stdio: ['pipe', 'ignore', 'pipe'],
+      windowsHide: true,
+    });
+    let errText = '';
+    const timer = setTimeout(() => {
+      try { child.kill(); } catch {}
+      reject(new Error(`${cmd} timed out`));
+    }, 3000);
+    child.stderr.on('data', (chunk) => { errText += chunk.toString(); });
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code === 0) resolve();
+      else reject(new Error(errText.trim() || `${cmd} exited ${code}`));
+    });
+    child.stdin.end(text, 'utf8');
+  });
+}
+
+async function copyToOsClipboard(text, platform = process.platform) {
+  if (platform === 'win32') {
+    await copyViaProcess(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        '[Console]::InputEncoding = [System.Text.Encoding]::UTF8; Set-Clipboard -Value ([Console]::In.ReadToEnd())',
+      ],
+      text,
+    );
+    return;
+  }
+  if (platform === 'darwin') {
+    await copyViaProcess('pbcopy', [], text);
+    return;
+  }
+  let lastErr = null;
+  for (const [cmd, args] of [
+    ['wl-copy', []],
+    ['xclip', ['-selection', 'clipboard']],
+    ['xsel', ['--clipboard', '--input']],
+  ]) {
+    try {
+      await copyViaProcess(cmd, args, text);
+      return;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr || new Error('No clipboard utility available');
+}
+
+app.api(
+  '/api/clipboard',
+  async (data) => {
+    const text = typeof data?.text === 'string' ? data.text : '';
+    if (!text) return { ok: false, error: 'text required' };
+    try {
+      await copyToOsClipboard(text);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err?.message || 'clipboard failed' };
+    }
+  },
+  'POST',
+);
 
 app.api(
   '/ui-prefs.js',

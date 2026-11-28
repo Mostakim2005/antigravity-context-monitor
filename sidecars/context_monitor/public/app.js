@@ -174,7 +174,7 @@
   function render(data) {
     state.lastData = data;
     const conv = data.conversationId || currentConv();
-    $('conv-badge').textContent = conv ? conv.slice(0, 8) : '无会话';
+    $('conv-badge').textContent = conv ? conv.slice(0, 6) : '无会话';
     $('conv-badge').title = conv || '未检测到 conversationId';
 
     const meta = data.meta || {};
@@ -212,7 +212,7 @@
       : `${Math.round(limit / (isPow2 ? 1024 : 1000))}K`;
     const badgeEl = $('limit-badge');
     if (badgeEl) {
-      badgeEl.textContent = `${limitShort} · ${fmtExact(limit)}`;
+      badgeEl.textContent = limitShort;
       badgeEl.title = data.contextLimitTokens
         ? `当前模型上下文上限（来自 LanguageServerService maxContextTokens: ${fmtExact(limit)}）`
         : `当前默认上下文上限：${fmtExact(limit)} tokens`;

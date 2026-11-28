@@ -79,7 +79,9 @@
     selectedPriceKey: '',
     selectedArchiveMonth: '',
     statusMsg: '',
-    copyStatus: '',
+    copyTarget: '',
+    copyOk: true,
+    copyTimer: null,
     lastContextSig: '',
     lastSentConvId: HOST_CONV_ID,
     pendingScopeTimer: null,
@@ -795,7 +797,18 @@
       )
       .join('');
 
-    const topItems = Array.isArray(bd.largestItems) ? bd.largestItems : [];
+    const showTopItems = isSectionEnabled('breakdownTopItems');
+    const topItems = showTopItems && Array.isArray(bd.largestItems) ? bd.largestItems : [];
+    const buildFallbackTooltip = (it) => {
+      const title = String(it?.title || '');
+      const tokStr = (Number(it?.tokens) || 0).toLocaleString('en-US');
+      if (/\bCODE_ACTION\b/.test(title)) {
+        return lang === 'en'
+          ? `CODE_ACTION: An agent code/file action step (file edit, write, or diff) retained in conversation context — ~${tokStr} est. tokens (${it.pctOfUsed}%).`
+          : `CODE_ACTION：对话上下文中保留的代码/文件操作步骤（文件编辑、写入或 Diff 变更），约 ${tokStr} tokens（占 ${it.pctOfUsed}%）。`;
+      }
+      return `${title} — ${tokStr} tokens (${it.pctOfUsed}%)`;
+    };
     const topHtml =
       topItems.length > 0
         ? `
@@ -803,22 +816,32 @@
         <div class="bd-top-list">
           ${topItems
             .map(
-              (it) => `
-              <div class="bd-top-row" title="${esc(it.title)}">
+              (it) => {
+                const tip = (lang === 'en' ? it.detailEn : it.detailZh) || buildFallbackTooltip(it);
+                return `
+              <div class="bd-top-row" title="${esc(tip)}">
                 <span class="bd-top-title">${esc(it.title)}</span>
                 <span class="bd-top-val">${fmtTok(it.tokens)} · ${it.pctOfUsed}%</span>
-              </div>`,
+              </div>`;
+              },
             )
             .join('')}
         </div>
       `
         : '';
 
+    const ctxLabel =
+      runtime.copyTarget === 'context'
+        ? (runtime.copyOk ? (lang === 'en' ? '✓ Copied!' : '✓ 已复制!') : (lang === 'en' ? 'Copy failed' : '复制失败'))
+        : (lang === 'en' ? 'Copy /context' : '复制 /context');
+    const handoffLabel =
+      runtime.copyTarget === 'handoff'
+        ? (runtime.copyOk ? (lang === 'en' ? '✓ Copied!' : '✓ 已复制!') : (lang === 'en' ? 'Copy failed' : '复制失败'))
+        : (lang === 'en' ? 'Copy Handoff' : '复制交接提示');
     const copyBtns = `
       <div class="bd-actions">
-        <button type="button" id="cm-copy-context" class="ghost-btn sc-btn-xs">${lang === 'en' ? 'Copy /context' : '复制 /context'}</button>
-        <button type="button" id="cm-copy-handoff" class="ghost-btn sc-btn-xs">${lang === 'en' ? 'Copy Handoff' : '复制交接提示'}</button>
-        ${runtime.copyStatus ? `<span class="bd-copy-ok">${esc(runtime.copyStatus)}</span>` : ''}
+        <button type="button" id="cm-copy-context" class="ghost-btn sc-btn-xs${runtime.copyTarget === 'context' && runtime.copyOk ? ' is-copied' : ''}">${ctxLabel}</button>
+        <button type="button" id="cm-copy-handoff" class="ghost-btn sc-btn-xs${runtime.copyTarget === 'handoff' && runtime.copyOk ? ' is-copied' : ''}">${handoffLabel}</button>
       </div>
     `;
 
@@ -1425,22 +1448,55 @@
 
       bindEvents(switcherBar, scopeCard);
 
+      async function copyTextRobust(text) {
+        try {
+          if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text);
+            return true;
+          }
+        } catch {
+          // Blocked by iframe permissions policy inside webview; fall back to sidecar OS clipboard
+        }
+        try {
+          const res = await rawApi('/api/clipboard', {
+            method: 'POST',
+            body: JSON.stringify({ text }),
+          });
+          if (res?.ok) return true;
+        } catch {
+          // fall through to execCommand
+        }
+        try {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          ta.setAttribute('readonly', '');
+          ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0;';
+          document.body.appendChild(ta);
+          ta.select();
+          const ok = Boolean(document.execCommand?.('copy'));
+          ta.remove();
+          if (ok) return true;
+        } catch {
+          // ignore
+        }
+        return false;
+      }
+
       bdCard.addEventListener('click', async (e) => {
         const isCtx = e.target.closest('#cm-copy-context');
         const isHandoff = e.target.closest('#cm-copy-handoff');
         if (!isCtx && !isHandoff) return;
         const text = isCtx ? buildContextReportText() : buildHandoffText();
-        try {
-          await navigator.clipboard?.writeText(text);
-          runtime.copyStatus = getLang() === 'en' ? 'Copied!' : '已复制!';
+        const ok = await copyTextRobust(text);
+        runtime.copyTarget = isCtx ? 'context' : 'handoff';
+        runtime.copyOk = ok;
+        renderBreakdown();
+        if (runtime.copyTimer) clearTimeout(runtime.copyTimer);
+        runtime.copyTimer = setTimeout(() => {
+          runtime.copyTarget = '';
+          runtime.copyTimer = null;
           renderBreakdown();
-          setTimeout(() => {
-            runtime.copyStatus = '';
-            renderBreakdown();
-          }, 1500);
-        } catch {
-          // ignore clipboard denial
-        }
+        }, 1600);
       });
 
       const viewHeatmap = document.getElementById('view-heatmap');
@@ -1502,6 +1558,7 @@
       if (prefs.switcher && !runtime.conversations) refreshConversations(false);
       if (prefs.costTab && isCostTabActive() && !runtime.scopeData) refreshScope(false);
       if (prefs.breakdown && !runtime.breakdownData) refreshBreakdown();
+      else if (runtime.breakdownData) renderBreakdown();
       if ((prefs.orchestrator || prefs.retries || prefs.modelDna) && !runtime.diagnosticsData) {
         refreshDiagnostics();
       }

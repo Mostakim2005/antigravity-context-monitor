@@ -46,27 +46,95 @@ export function classifySection(tokenType, title) {
   return 'other';
 }
 
+function extractStepHint(step) {
+  if (!step || typeof step !== 'object') return '';
+  const ca = step.codeAction;
+  const spec = ca?.actionSpec;
+  const candidates = [
+    ca?.description,
+    ca?.summary,
+    spec?.command?.commandLine,
+    spec?.createFile?.path?.absolutePath,
+    spec?.editFile?.path?.absolutePath,
+    spec?.editFile?.targetFile,
+    ca?.targetFile,
+    ca?.filePath,
+    ca?.absolutePath,
+    ca?.path,
+    step?.runCommand?.commandLine,
+    step?.runCommand?.command,
+    step?.viewFile?.absolutePath,
+    step?.writeToFile?.targetFile,
+    step?.replaceFileContent?.targetFile,
+    step?.multiReplaceFileContent?.targetFile,
+    step?.grepSearch?.query,
+    step?.findByName?.pattern,
+    step?.listDir?.directoryPath,
+    step?.toolCall?.name,
+    step?.metadata?.toolName,
+    step?.metadata?.toolCall?.name,
+  ];
+  for (const c of candidates) {
+    const s = typeof c === 'string' ? c.trim().replace(/\s+/g, ' ') : '';
+    if (s) return s.length > 72 ? `…${s.slice(-71)}` : s;
+  }
+  return '';
+}
+
 function classifyStep(step) {
   const type = String(step?.type || '').toUpperCase();
-  if (type.includes('USER_INPUT')) return { category: 'user', label: 'User prompt' };
-  if (type.includes('CHECKPOINT')) return { category: 'system', label: 'Compaction checkpoint' };
+  const hint = extractStepHint(step);
+  if (type.includes('USER_INPUT')) return { category: 'user', label: 'User prompt', stepType: type, hint };
+  if (type.includes('CHECKPOINT')) return { category: 'system', label: 'Compaction checkpoint', stepType: type, hint };
   if (type.includes('PLANNER_RESPONSE') || type.includes('MODEL_RESPONSE')) {
-    return { category: 'assistant_thinking', label: 'Assistant response' };
+    return { category: 'assistant_thinking', label: 'Assistant response', stepType: type, hint };
   }
   if (type.includes('SUBAGENT') || step?.subagentSpec || step?.subagent) {
-    return { category: 'subagents', label: 'Subagent call' };
+    return { category: 'subagents', label: 'Subagent call', stepType: type, hint };
   }
   if (type.includes('MCP') || step?.mcpToolCall) {
-    return { category: 'plugins_mcp', label: 'MCP tool' };
+    return { category: 'plugins_mcp', label: 'MCP tool', stepType: type, hint };
   }
   if (type.includes('TOOL') || type.includes('RUN_COMMAND') || type.includes('CODE_ACTION') || step?.toolCall) {
     const toolName = step?.toolCall?.name || step?.metadata?.toolName || type.replace(/^CORTEX_STEP_TYPE_/, '');
-    return { category: 'tools', label: toolName || 'Tool call' };
+    return { category: 'tools', label: toolName || 'Tool call', stepType: type, hint };
   }
   if (type.includes('FILE') || type.includes('VIEW') || type.includes('MEDIA')) {
-    return { category: 'media_files', label: 'File / media' };
+    return { category: 'media_files', label: 'File / media', stepType: type, hint };
   }
-  return { category: 'other', label: type.replace(/^CORTEX_STEP_TYPE_/, '') || 'Step' };
+  return { category: 'other', label: type.replace(/^CORTEX_STEP_TYPE_/, '') || 'Step', stepType: type, hint };
+}
+
+function buildItemDetails(it, catMeta, tokens, pctOfUsed) {
+  const tokStr = tokens.toLocaleString('en-US');
+  const title = String(it?.title || '');
+  const hint = String(it?.hint || '').trim();
+  const st = String(it?.stepType || '').toUpperCase();
+
+  if (st.includes('CODE_ACTION') || /\bCODE_ACTION\b/.test(title)) {
+    const targetEn = hint ? ` (${hint})` : '';
+    const targetZh = hint ? `（${hint}）` : '';
+    return {
+      detailEn: `CODE_ACTION${targetEn}: An agent code/file action step (file edit, write, diff, or workspace action) retained in conversation context — ~${tokStr} est. tokens (${pctOfUsed}%).`,
+      detailZh: `CODE_ACTION${targetZh}：对话上下文中保留的代码/文件操作步骤（文件编辑、写入或 Diff 变更），约 ${tokStr} tokens（占 ${pctOfUsed}%）。`,
+    };
+  }
+  if (st.includes('RUN_COMMAND') || /\bRUN_COMMAND\b/.test(title)) {
+    const cmdPartEn = hint ? `: ${hint}` : '';
+    const cmdPartZh = hint ? `：${hint}` : '';
+    return {
+      detailEn: `RUN_COMMAND${cmdPartEn} — Terminal command & output retained in context (~${tokStr} est. tokens, ${pctOfUsed}%).`,
+      detailZh: `RUN_COMMAND${cmdPartZh} — 保留在上下文中的终端命令与输出（约 ${tokStr} tokens，占 ${pctOfUsed}%）。`,
+    };
+  }
+  const catEn = catMeta?.en || 'Context';
+  const catZh = catMeta?.zh || '上下文';
+  const hintSuffixEn = hint ? ` (${hint})` : '';
+  const hintSuffixZh = hint ? `（${hint}）` : '';
+  return {
+    detailEn: `${catEn} — ${title}${hintSuffixEn} (${tokStr} tokens, ${pctOfUsed}% of context).`,
+    detailZh: `${catZh} — ${title}${hintSuffixZh}（${tokStr} tokens，占已用上下文 ${pctOfUsed}%）。`,
+  };
 }
 
 function estimateCharsTokens(step) {
@@ -159,11 +227,11 @@ export function computeContextBreakdown({
     let rawSum = 0;
     for (let i = 0; i < steps.length; i++) {
       const st = steps[i];
-      const { category, label } = classifyStep(st);
+      const { category, label, stepType, hint } = classifyStep(st);
       if (preStepTotal > 0 && coveredCats.has(category)) continue;
       const est = estimateCharsTokens(st);
       rawSum += est;
-      rawItems.push({ title: `#${i} ${label}`, category, est });
+      rawItems.push({ title: `#${i} ${label}`, category, stepType, hint, est });
     }
     if (rawItems.length > 0 && rawSum > 0) {
       if (source === 'none') source = 'steps_estimated';
@@ -173,7 +241,7 @@ export function computeContextBreakdown({
         const b = buckets.get(ri.category);
         b.tokens += tok;
         b.itemCount += 1;
-        items.push({ title: ri.title, category: ri.category, tokens: tok });
+        items.push({ title: ri.title, category: ri.category, stepType: ri.stepType, hint: ri.hint, tokens: tok });
       }
     }
   }
@@ -205,10 +273,17 @@ export function computeContextBreakdown({
   const largestItems = items
     .sort((a, b) => b.tokens - a.tokens)
     .slice(0, 5)
-    .map((it) => ({
-      ...it,
-      pctOfUsed: totalUsed > 0 ? Number(((it.tokens / totalUsed) * 100).toFixed(1)) : 0,
-    }));
+    .map((it) => {
+      const pctOfUsed = totalUsed > 0 ? Number(((it.tokens / totalUsed) * 100).toFixed(1)) : 0;
+      const details = buildItemDetails(it, buckets.get(it.category), it.tokens, pctOfUsed);
+      return {
+        title: it.title,
+        category: it.category,
+        tokens: it.tokens,
+        pctOfUsed,
+        ...details,
+      };
+    });
 
   return {
     source,

@@ -19,8 +19,9 @@
   * `sidecars/context_monitor/db.mjs :: exportMonthArchive` & `backfillLegacyAccountModelsOnce` — Exports/freezes monthly JSON bundles and backfills per-model legacy account seeds without double-counting.
   * `sidecars/context_monitor/db.mjs :: getUiPrefs` & `saveUiPrefs` & `resolveUiPrefsPath` — Persists section visibility, language, active tab, cost scope, and lock-main state in SQLite `kv` (`ui_prefs_v1`) mirrored atomically to a durable cross-install JSON file (`%APPDATA%\context-monitor\ui-prefs.json` / XDG config).
   * `sidecars/context_monitor/main.mjs :: /ui-prefs.js` & `/api/ui-prefs` — Synchronously bootstraps `globalThis.__CM_UI_PREFS__` before UI render and handles authenticated coalesced preference updates from `public/prefs.js :: CM_PREFS`.
+  * `sidecars/context_monitor/main.mjs :: /api/clipboard` & `copyToOsClipboard` — Host OS clipboard fallback (`Set-Clipboard` UTF-8 / `pbcopy` / `wl-copy`) when cross-origin webview iframes block `navigator.clipboard.writeText`.
   * `sidecars/context_monitor/pricing.mjs :: calculateScopeCosts` — Published API rate attribution + user custom overrides.
-  * `sidecars/context_monitor/breakdown.mjs :: computeContextBreakdown` — 9-category prompt context classification + Top 5 consumer extraction.
+  * `sidecars/context_monitor/breakdown.mjs :: computeContextBreakdown` — 9-category prompt context classification + Top 5 consumer extraction with `CODE_ACTION`/step hover explanations (`detailEn` / `detailZh`).
 
 ```mermaid
 flowchart LR
@@ -47,6 +48,6 @@ flowchart LR
 ### [DECISION: Node-Sqlite-Now-Go-Backend-Future] | Aliases: go migration, ram optimization, roadmap
 > **1-Line Summary:** `[DECIDED BY: HUMAN]` Keep the lightweight zero-dependency Node.js (`node:sqlite`) backend for immediate Antigravity portability (~80–95 MB RSS), with a clean option to swap the HTTP backend to a compiled Go binary (~8–18 MB RSS) in the future without altering `public/`.
 
-* **Rationale:** Every UI module (`public/*.js`, `public/styles.css`, `public/index.html`) interacts exclusively through documented JSON endpoints (`/api/context`, `/api/quotas`, `/api/accounts`, `/api/diagnostics`, `/api/scope`, `/api/cost-prefs`, `/api/ui-prefs`, `/ui-prefs.js`, `/api/breakdown`, `/api/conversations`, `/api/pricing`, `/api/archive/export`, `/api/archive/import`, `/api/heatmap`, `/api/heatmap/analytics`). Replacing `main.mjs` + `.mjs` libraries with a single Go executable later requires zero frontend or `app.asar` changes.
+* **Rationale:** Every UI module (`public/*.js`, `public/styles.css`, `public/index.html`) interacts exclusively through documented JSON endpoints (`/api/context`, `/api/quotas`, `/api/accounts`, `/api/diagnostics`, `/api/scope`, `/api/cost-prefs`, `/api/ui-prefs`, `/ui-prefs.js`, `/api/clipboard`, `/api/breakdown`, `/api/conversations`, `/api/pricing`, `/api/archive/export`, `/api/archive/import`, `/api/heatmap`, `/api/heatmap/analytics`). Replacing `main.mjs` + `.mjs` libraries with a single Go executable later requires zero frontend or `app.asar` changes.
 * **Links:** `[FEATURE: Parity-Inventory-Ledger]` (`docs/PORTING_MATRIX.md`)
 * **Verified By:** `sidecars/context_monitor/test/features.test.mjs :: phase 4 active-chat orchestrator split, retry/error waste, model dna, config reader, and byok isolation`

@@ -71,36 +71,37 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 4px 5px;
+  flex-wrap: nowrap;
+  gap: 4px;
+  min-width: 0;
 }
 
 .title-wrap {
   display: flex;
   align-items: center;
   flex-wrap: nowrap;
-  gap: 4px;
+  gap: 3px;
   min-width: 0;
   flex-shrink: 0;
 }
 
 .title {
   margin: 0;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
   white-space: nowrap;
 }
 
 .live-pill {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  padding: 1px 5px;
+  gap: 2px;
+  padding: 1px 4px;
   border-radius: 999px;
   background: var(--cm-muted);
   border: 1px solid var(--cm-border);
-  font-size: 9.5px;
+  font-size: 9px;
   color: var(--cm-fg-muted);
   white-space: nowrap;
 }
@@ -118,13 +119,14 @@ html, body {
 
 .conv-badge {
   font-family: var(--cm-mono);
-  font-size: 9.5px;
+  font-size: 9px;
   color: var(--cm-fg-muted);
-  padding: 1px 4px;
-  border-radius: 5px;
+  padding: 1px 3px;
+  border-radius: 4px;
   background: var(--cm-muted);
   border: 1px solid var(--cm-border);
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .repo-line {
@@ -140,7 +142,7 @@ html, body {
   align-items: center;
   justify-content: space-between;
   gap: 4px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   min-width: 0;
 }
 
@@ -167,8 +169,8 @@ html, body {
   background: var(--cm-card);
   color: var(--cm-fg-muted);
   font-family: var(--cm-mono);
-  font-size: 10px;
-  padding: 2px 6px;
+  font-size: 9.5px;
+  padding: 2px 5px;
   border-radius: 5px;
   cursor: pointer;
   white-space: nowrap;
@@ -609,8 +611,8 @@ html, body {
 
 .tab-group {
   display: inline-flex;
-  gap: 2px;
-  padding: 2px;
+  gap: 1px;
+  padding: 1px;
   border-radius: 6px;
   background: color-mix(in srgb, var(--cm-fg) 6%, transparent);
 }
@@ -620,9 +622,9 @@ html, body {
   border: 0;
   background: transparent;
   color: var(--cm-fg-muted);
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 550;
-  padding: 2px 6px;
+  padding: 2px 5px;
   border-radius: 4px;
   cursor: pointer;
   white-space: nowrap;
@@ -771,10 +773,10 @@ html, body {
   background: transparent;
   color: var(--cm-fg-muted);
   font-family: var(--cm-font);
-  font-size: 9.5px;
+  font-size: 9px;
   font-weight: 600;
   line-height: 1;
-  padding: 2px 5px;
+  padding: 2px 3.5px;
   border-radius: 4px;
   cursor: pointer;
   white-space: nowrap;
@@ -797,10 +799,10 @@ html, body {
 .limit-bar-right {
   display: inline-flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 4px;
+  flex-wrap: nowrap;
+  gap: 3px;
   margin-left: auto;
-  max-width: 100%;
+  flex-shrink: 0;
   min-width: 0;
 }
 
@@ -1382,6 +1384,13 @@ html, body {
   justify-content: space-between;
   gap: 8px;
   font-size: 11px;
+  padding: 1px 3px;
+  border-radius: 4px;
+  cursor: help;
+}
+
+.bd-top-row:hover {
+  background: var(--cm-hover);
 }
 
 .bd-top-title {
@@ -1390,6 +1399,8 @@ html, body {
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+  text-decoration: underline dotted color-mix(in srgb, var(--cm-fg-muted) 45%, transparent);
+  text-underline-offset: 2px;
 }
 
 .bd-top-val {
@@ -1409,28 +1420,30 @@ html, body {
 .header-actions {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  flex-wrap: wrap;
+  gap: 3px;
+  flex-wrap: nowrap;
   justify-content: flex-end;
   margin-left: auto;
   min-width: 0;
+  overflow: hidden;
 }
 
 .acct-header-pill {
   appearance: none;
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  padding: 1px 4px 1px 5px;
+  gap: 2.5px;
+  padding: 1px 3px 1px 4px;
   border-radius: 999px;
   border: 1px solid var(--cm-border);
   background: var(--cm-muted);
   color: var(--cm-fg);
   font-family: var(--cm-font);
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 600;
   cursor: pointer;
-  max-width: 100%;
+  min-width: 0;
+  flex-shrink: 1;
   white-space: nowrap;
 }
 
@@ -1456,7 +1469,7 @@ html, body {
 }
 
 .acct-pill-name {
-  max-width: 72px;
+  max-width: 48px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -1464,20 +1477,22 @@ html, body {
 .acct-pill-cnt {
   color: var(--cm-fg-muted);
   font-family: var(--cm-mono);
-  font-size: 9.5px;
+  font-size: 8.5px;
   font-weight: 600;
+  flex-shrink: 0;
 }
 
 .acct-pill-tok {
   font-family: var(--cm-mono);
-  font-size: 9.5px;
+  font-size: 9px;
   font-weight: 700;
-  padding: 0 4px;
+  padding: 0 3px;
   border-radius: 999px;
   color: var(--cm-tok-fg);
   background: var(--cm-tok-bg);
   border: 1px solid var(--cm-tok-bd);
   line-height: 1.35;
+  flex-shrink: 0;
 }
 
 .acct-pill-meta {
@@ -1486,11 +1501,19 @@ html, body {
   font-weight: 650;
 }
 
-/* Tab Bar Wrapping for 4 Tabs */
+/* Tab Bar Single-Line Fit for 4 Tabs */
 .tab-group {
   display: inline-flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  flex-shrink: 1;
+  min-width: 0;
   max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tab-group::-webkit-scrollbar {
+  display: none;
 }
 
 /* Multi-Account Tab (#view-accounts) */
@@ -1972,20 +1995,25 @@ html, body {
 }
 
 .bd-actions {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 5px;
-  margin-top: 7px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 6px;
   padding-top: 6px;
   border-top: 1px solid var(--cm-border);
 }
 
-.bd-copy-ok {
-  font-family: var(--cm-mono);
-  font-size: 10.5px;
+.bd-actions .sc-btn-xs {
+  width: 100%;
+  text-align: center;
+  padding: 4px 8px;
   font-weight: 600;
+}
+
+.bd-actions .sc-btn-xs.is-copied {
   color: var(--cm-cache);
+  border-color: color-mix(in srgb, var(--cm-cache) 55%, var(--cm-border));
+  background: color-mix(in srgb, var(--cm-cache) 14%, var(--cm-card));
 }
 
 .cm-gauge-extra {

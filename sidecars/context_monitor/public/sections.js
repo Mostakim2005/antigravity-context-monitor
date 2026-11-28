@@ -7,6 +7,7 @@
     { key: 'claudeQuotas', en: 'Claude / GPT Quotas', zh: 'Claude / GPT 额度', defaultOn: true },
     { key: 'gauge', en: 'Context Used', zh: '当前上下文占用', defaultOn: true },
     { key: 'breakdown', en: 'Context Breakdown', zh: '上下文构成', defaultOn: true },
+    { key: 'breakdownTopItems', en: 'Top 5 Largest Items', zh: '占用前 5 项', defaultOn: true },
     { key: 'tokenMetrics', en: 'Cache / Input / Output', zh: '缓存 / 输入 / 输出', defaultOn: true },
     { key: 'speedMetrics', en: 'TTFT / Speed / Duration', zh: '首字 / 速度 / 耗时', defaultOn: true },
     { key: 'totals', en: 'Session Totals', zh: '本会话累计', defaultOn: true },

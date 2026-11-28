@@ -1032,3 +1032,32 @@ test('quotas.js independently hides Claude / GPT pool when claudeQuotas section 
   assert.ok(quotasCard.innerHTML.includes('Gemini'));
   assert.ok(quotasCard.innerHTML.includes('Claude / GPT'));
 });
+
+test('breakdown enriches CODE_ACTION items with bilingual hover explanations and hints', () => {
+  const res = computeContextBreakdown({
+    steps: [
+      {
+        type: 'CORTEX_STEP_TYPE_CODE_ACTION',
+        codeAction: { description: 'Update public/extras.js clipboard fallback', targetFile: 'sidecars/context_monitor/public/extras.js' },
+      },
+      {
+        type: 'CORTEX_STEP_TYPE_CODE_ACTION',
+        codeAction: {},
+      },
+    ],
+    usedTokens: 20_000,
+    limitTokens: 512_000,
+  });
+
+  assert.equal(res.largestItems.length, 2);
+  const first = res.largestItems[0];
+  assert.ok(first.title.includes('CODE_ACTION'));
+  assert.ok(first.detailEn.includes('CODE_ACTION'));
+  assert.ok(first.detailEn.includes('Update public/extras.js clipboard fallback'));
+  assert.ok(first.detailZh.includes('CODE_ACTION'));
+  assert.ok(first.detailZh.includes('代码/文件操作步骤'));
+
+  const generic = res.largestItems[1];
+  assert.ok(generic.detailEn.includes('file edit, write, diff'));
+  assert.ok(generic.detailZh.includes('文件编辑、写入或 Diff'));
+});

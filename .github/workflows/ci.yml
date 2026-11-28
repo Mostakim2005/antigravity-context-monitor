@@ -27,6 +27,7 @@ jobs:
           node --check sidecars/context_monitor/breakdown.mjs &&
           node --check sidecars/context_monitor/db.mjs &&
           node --check sidecars/context_monitor/public/i18n.js &&
+          node --check sidecars/context_monitor/public/prefs.js &&
           node --check sidecars/context_monitor/public/quotas.js &&
           node --check sidecars/context_monitor/public/sections.js &&
           node --check sidecars/context_monitor/public/accounts.js &&

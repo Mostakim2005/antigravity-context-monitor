@@ -34,6 +34,7 @@ import {
   exportMonthArchive,
   getCostPrefs,
   getCustomPricingMap,
+  getUiPrefs,
   importMonthArchive,
   listAccountSnapshots,
   listMonthsInDb,
@@ -45,6 +46,7 @@ import {
   resolveDbPath,
   saveCostPrefs,
   saveCustomPricingEntry,
+  saveUiPrefs,
   scanTranscriptIncremental,
   seedAccountsFromLegacyOnce,
   syncBrainIncremental,
@@ -56,6 +58,7 @@ const PUBLIC_DIR = join(__dirname, 'public');
 
 const STATIC = {
   '/styles.css': ['styles.css', 'text/css; charset=utf-8'],
+  '/prefs.js': ['prefs.js', 'application/javascript; charset=utf-8'],
   '/i18n.js': ['i18n.js', 'application/javascript; charset=utf-8'],
   '/quotas.js': ['quotas.js', 'application/javascript; charset=utf-8'],
   '/sections.js': ['sections.js', 'application/javascript; charset=utf-8'],
@@ -63,6 +66,13 @@ const STATIC = {
   '/extras.js': ['extras.js', 'application/javascript; charset=utf-8'],
   '/app.js': ['app.js', 'application/javascript; charset=utf-8'],
 };
+
+function safeJsonForScript(obj) {
+  return JSON.stringify(obj)
+    .replace(/</g, '\\u003c')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
 
 const transcriptCache = new Map(); // path -> { mtimeMs, size, summary }
 const heatmapFileCache = new Map(); // path -> { mtimeMs, size, convId, dailyMap }
@@ -343,6 +353,30 @@ for (const [route, [file, contentType]] of Object.entries(STATIC)) {
     'GET',
   );
 }
+
+app.api(
+  '/ui-prefs.js',
+  () => new Response(`globalThis.__CM_UI_PREFS__ = ${safeJsonForScript(getUiPrefs(getDb()))};\n`, {
+    contentType: 'application/javascript; charset=utf-8',
+    headers: { 'Cache-Control': 'no-store' },
+  }),
+  'GET',
+);
+
+app.api(
+  '/api/ui-prefs',
+  () => new Response(JSON.stringify({ prefs: getUiPrefs(getDb()) }), {
+    contentType: 'application/json; charset=utf-8',
+    headers: { 'Cache-Control': 'no-store' },
+  }),
+  'GET',
+);
+
+app.api(
+  '/api/ui-prefs',
+  (data) => ({ ok: true, prefs: saveUiPrefs(getDb(), data || {}) }),
+  'POST',
+);
 
 app.api(
   '/api/context',

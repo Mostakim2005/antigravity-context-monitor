@@ -23,7 +23,7 @@ Whenever either repository ships new capabilities, diff against this matrix to p
 | Feature | Upstream Origin (`Antigravity-Context-Window-Monitor`) | Status in `Context` | Lightweight Implementation (`Code Anchors`) | Memory / CPU Notes |
 | --- | --- | --- | --- | --- |
 | Bilingual EN / 中文 Toggle | `src/i18n-core.ts` | **Ported** | `sidecars/context_monitor/public/i18n.js :: CM_I18N` | Zero hover popovers; client overlay |
-| Hide / Show Every Section & Tab | *(Fork Exclusive)* | **Ported** | `sidecars/context_monitor/public/sections.js :: CM_SECTIONS` | Exact verbatim card titles; 0 work when hidden |
+| Hide / Show Every Section & Tab | *(Fork Exclusive)* | **Ported** | `sidecars/context_monitor/public/sections.js :: CM_SECTIONS`, `public/prefs.js :: CM_PREFS` & `db.mjs :: saveUiPrefs` | Exact verbatim card titles; 0 work when hidden; persisted in SQLite `kv` + cross-install JSON mirror across restarts & disable/enable |
 | Chat Switcher + Lock to Main Agent | `src/conversation-selector.ts` | **Ported** | `sidecars/context_monitor/main.mjs :: getConversationsSnapshot` & `public/extras.js` | Single LS metadata call (10s TTL) |
 | 5h / 7d Model Quotas + Runway + AI Credits | `src/quota-runway.ts`, `src/account-credits.ts` | **Ported** | `sidecars/context_monitor/quotas.mjs` & `db.mjs :: recordQuotaSamplesAndComputeRunway` | 45m SQLite sliding samples (`<1 KB`) |
 | 9-Category Context Breakdown + Top 5 | `src/context-breakdown.ts` | **Ported** | `sidecars/context_monitor/breakdown.mjs :: computeContextBreakdown` | Active chat only; step fallback fixed in Phase 1 |

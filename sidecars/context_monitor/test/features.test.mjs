@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync, appendFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+import vm from 'node:vm';
 import {
   normalizeModelKey,
   resolveModelPricing,
@@ -38,6 +40,9 @@ import {
   removeAccountSnapshot,
   getCostPrefs,
   saveCostPrefs,
+  resolveUiPrefsPath,
+  getUiPrefs,
+  saveUiPrefs,
   queryHeatmapSql,
 } from '../db.mjs';
 
@@ -708,4 +713,257 @@ test('phase 4 active-chat orchestrator split, retry/error waste, model dna, conf
     { isCustomModel: true },
   );
   assert.equal(isolated[0].runway.status, 'custom_model_isolated');
+});
+
+test('ui prefs persist in SQLite and durable JSON mirror across disable/enable and fresh DB reinstall', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'cm-ui-prefs-'));
+  const dbPath1 = join(dir, 'run1', 'context.db');
+  const dbPath2 = join(dir, 'run2', 'context.db');
+  const prefsPath = join(dir, 'user-config', 'ui-prefs.json');
+  const db1 = openContextDb(dbPath1);
+  let db1Reopened = null;
+  let db2 = null;
+  t.after(() => {
+    try { db1.close(); } catch {}
+    try { db1Reopened?.close(); } catch {}
+    try { db2?.close(); } catch {}
+    try { rmSync(dir, { recursive: true, force: true }); } catch {}
+  });
+
+  // Path resolution covers override + Windows/macOS/Linux
+  assert.equal(resolveUiPrefsPath({ ANTIGRAVITY_CONTEXT_MONITOR_PREFS_PATH: prefsPath }), prefsPath);
+  assert.equal(
+    resolveUiPrefsPath({ APPDATA: 'C:\\Users\\demo\\AppData\\Roaming' }, 'win32'),
+    join('C:\\Users\\demo\\AppData\\Roaming', 'context-monitor', 'ui-prefs.json'),
+  );
+  assert.ok(resolveUiPrefsPath({ XDG_CONFIG_HOME: '/tmp/cfg' }, 'linux').endsWith(join('context-monitor', 'ui-prefs.json')));
+
+  // Initial empty state
+  const empty = getUiPrefs(db1, { prefsPath });
+  assert.deepEqual(empty.sections, {});
+  assert.equal(empty.lang, null);
+  assert.equal(empty.activeTab, null);
+
+  // Save section toggles + guard unsafe keys / non-boolean values
+  const saved1 = saveUiPrefs(
+    db1,
+    {
+      sections: { quotas: false, retries: false, heatmap: false, bad: 'nope' },
+      ['__proto__']: { polluted: true },
+    },
+    { prefsPath },
+  );
+  assert.deepEqual(saved1.sections, { quotas: false, retries: false, heatmap: false });
+  assert.equal(existsSync(prefsPath), true);
+
+  // Partial update of lang/activeTab/scope/switcher must preserve sections
+  const saved2 = saveUiPrefs(
+    db1,
+    {
+      lang: 'zh',
+      activeTab: 'cost',
+      scope: { scope: 'project', showPricing: true },
+      switcher: { lockMain: true },
+    },
+    { prefsPath },
+  );
+  assert.deepEqual(saved2.sections, { quotas: false, retries: false, heatmap: false });
+  assert.equal(saved2.lang, 'zh');
+  assert.equal(saved2.activeTab, 'cost');
+  assert.equal(saved2.scope.scope, 'project');
+  assert.equal(saved2.scope.showPricing, true);
+  assert.equal(saved2.switcher.lockMain, true);
+
+  // Simulate plugin disable -> enable on same DB (new connection)
+  db1.close();
+  db1Reopened = openContextDb(dbPath1);
+  const afterToggle = getUiPrefs(db1Reopened, { prefsPath });
+  assert.deepEqual(afterToggle.sections, { quotas: false, retries: false, heatmap: false });
+  assert.equal(afterToggle.lang, 'zh');
+  assert.equal(afterToggle.switcher.lockMain, true);
+
+  // Simulate uninstall + reinstall (brand-new DB file, only durable user ui-prefs.json survives)
+  db2 = openContextDb(dbPath2);
+  const restored = getUiPrefs(db2, { prefsPath });
+  assert.deepEqual(restored.sections, { quotas: false, retries: false, heatmap: false });
+  assert.equal(restored.lang, 'zh');
+  assert.equal(restored.activeTab, 'cost');
+  assert.equal(restored.scope.scope, 'project');
+  assert.equal(restored.switcher.lockMain, true);
+  // Seeded back into db2 kv table
+  const rowInDb2 = db2.prepare("SELECT v FROM kv WHERE k = 'ui_prefs_v1'").get();
+  assert.ok(rowInDb2?.v);
+
+  // Simulate deleted external JSON mirror -> recovered from SQLite db2
+  rmSync(prefsPath, { force: true });
+  const recovered = getUiPrefs(db2, { prefsPath });
+  assert.deepEqual(recovered.sections, { quotas: false, retries: false, heatmap: false });
+  assert.equal(existsSync(prefsPath), true);
+});
+
+test('prefs.js + sections.js restore server sections across port changes, migrate localStorage, and coalesce saves', async () => {
+  const testDir = dirname(fileURLToPath(import.meta.url));
+  const prefsSrc = readFileSync(join(testDir, '..', 'public', 'prefs.js'), 'utf-8');
+  const sectionsSrc = readFileSync(join(testDir, '..', 'public', 'sections.js'), 'utf-8');
+
+  function makeHarness({ serverBoot = undefined, initialLocal = {}, fetchImpl = null } = {}) {
+    const store = new Map(Object.entries(initialLocal));
+    const listeners = new Map();
+    const classSet = (initial = []) => {
+      const s = new Set(initial);
+      return {
+        add: (c) => s.add(c),
+        remove: (c) => s.delete(c),
+        toggle: (c, force) => (force === undefined ? (s.has(c) ? (s.delete(c), false) : (s.add(c), true)) : (force ? s.add(c) : s.delete(c), Boolean(force))),
+        contains: (c) => s.has(c),
+      };
+    };
+    const makeEl = (id) => ({
+      id,
+      className: '',
+      classList: classSet(),
+      dataset: {},
+      children: [],
+      attributes: {},
+      innerHTML: '',
+      textContent: '',
+      title: '',
+      parentElement: null,
+      setAttribute(k, v) { this.attributes[k] = String(v); },
+      getAttribute(k) { return this.attributes[k] ?? null; },
+      append(...nodes) { for (const n of nodes) { n.parentElement = this; this.children.push(n); } },
+      appendChild(n) { n.parentElement = this; this.children.push(n); return n; },
+      insertBefore(n) { n.parentElement = this; this.children.unshift(n); return n; },
+      addEventListener(ev, fn) {
+        if (!listeners.has(`${id}:${ev}`)) listeners.set(`${id}:${ev}`, []);
+        listeners.get(`${id}:${ev}`).push(fn);
+      },
+      querySelectorAll: () => [],
+      querySelector: () => null,
+      click() {},
+    });
+
+    const limitBar = makeEl('.limit-bar');
+    const header = makeEl('.header');
+    const limitBadge = makeEl('limit-badge');
+    limitBadge.parentElement = limitBar;
+    const byId = new Map([
+      ['limit-badge', limitBadge],
+      ['quotas-card', makeEl('quotas-card')],
+      ['switcher-bar', makeEl('switcher-bar')],
+      ['tab-heatmap', makeEl('tab-heatmap')],
+    ]);
+
+    const document = {
+      readyState: 'complete',
+      getElementById: (id) => byId.get(id) || null,
+      querySelector: (sel) => (sel === '.limit-bar' ? limitBar : sel === '.header' ? header : null),
+      createElement: (tag) => {
+        const el = makeEl(tag);
+        const origSetId = Object.getOwnPropertyDescriptor(el, 'id');
+        Object.defineProperty(el, 'id', {
+          get() { return this._id || ''; },
+          set(v) { this._id = v; if (v) byId.set(v, this); },
+        });
+        if (origSetId?.value) el.id = origSetId.value;
+        return el;
+      },
+      addEventListener: () => {},
+    };
+
+    const ctx = {
+      globalThis: {},
+      document,
+      localStorage: {
+        getItem: (k) => (store.has(k) ? store.get(k) : null),
+        setItem: (k, v) => store.set(k, String(v)),
+      },
+      sidecar: fetchImpl ? { fetch: fetchImpl } : undefined,
+      setTimeout,
+      clearTimeout,
+    };
+    ctx.globalThis = ctx;
+    if (serverBoot !== undefined) {
+      ctx.__CM_UI_PREFS__ = serverBoot;
+    }
+
+    vm.runInNewContext(prefsSrc, ctx);
+    vm.runInNewContext(sectionsSrc, ctx);
+
+    return { ctx, store, byId, listeners };
+  }
+
+  // Case A: Empty localStorage (new ephemeral port after disable/enable), server bootstrap restores turned-off sections
+  const callsA = [];
+  const hA = makeHarness({
+    serverBoot: {
+      sections: { quotas: false, heatmap: false, modelDna: false },
+      lang: 'en',
+      updatedAtMs: 1000,
+    },
+    initialLocal: {},
+    fetchImpl: async (url, opts) => {
+      callsA.push({ url, opts });
+      return { ok: true, json: async () => ({ ok: true, prefs: { sections: JSON.parse(opts.body).sections } }) };
+    },
+  });
+  assert.equal(hA.ctx.CM_SECTIONS.isEnabled('quotas'), false);
+  assert.equal(hA.ctx.CM_SECTIONS.isEnabled('heatmap'), false);
+  assert.equal(hA.ctx.CM_SECTIONS.isEnabled('modelDna'), false);
+  assert.equal(hA.ctx.CM_SECTIONS.isEnabled('gauge'), true);
+  assert.equal(hA.byId.get('quotas-card').classList.contains('cm-sec-hidden'), true);
+  assert.equal(JSON.parse(hA.store.get('cm_sections_v1')).quotas, false);
+  assert.equal(callsA.length, 0);
+
+  // Case B: First upgrade migration from existing localStorage when server sections is empty
+  const callsB = [];
+  const hB = makeHarness({
+    serverBoot: { sections: {}, updatedAtMs: 0 },
+    initialLocal: { cm_sections_v1: JSON.stringify({ chart: false, turns: false }) },
+    fetchImpl: async (url, opts) => {
+      callsB.push({ url, opts });
+      return { ok: true, json: async () => ({ ok: true, prefs: { sections: JSON.parse(opts.body).sections, updatedAtMs: 2000 } }) };
+    },
+  });
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(hB.ctx.CM_SECTIONS.isEnabled('chart'), false);
+  assert.equal(hB.ctx.CM_SECTIONS.isEnabled('turns'), false);
+  assert.equal(callsB.length, 1);
+  assert.equal(callsB[0].url, '/api/ui-prefs');
+  assert.equal(JSON.parse(callsB[0].opts.body).sections.chart, false);
+
+  // Case C: Rapid patch coalescing (first POST in flight, two updates merge into single follow-up POST)
+  const callsC = [];
+  let releaseFirst;
+  const firstGate = new Promise((r) => { releaseFirst = r; });
+  const hC = makeHarness({
+    serverBoot: { sections: { quotas: true }, updatedAtMs: 10 },
+    fetchImpl: async (url, opts) => {
+      const body = JSON.parse(opts.body);
+      callsC.push(body);
+      if (callsC.length === 1) await firstGate;
+      return { ok: true, json: async () => ({ ok: true, prefs: { sections: body.sections, updatedAtMs: 20 + callsC.length } }) };
+    },
+  });
+  const p1 = hC.ctx.CM_PREFS.saveServerPatch({ sections: { quotas: false } });
+  const p2 = hC.ctx.CM_PREFS.saveServerPatch({ sections: { heatmap: false } });
+  const p3 = hC.ctx.CM_PREFS.saveServerPatch({ sections: { quotas: true } });
+  releaseFirst();
+  await Promise.all([p1, p2, p3]);
+  assert.equal(callsC.length, 2);
+  assert.deepEqual(callsC[1].sections, { heatmap: false, quotas: true });
+
+  // Case D: Async GET /api/ui-prefs fallback when __CM_UI_PREFS__ bootstrap is absent
+  const hD = makeHarness({
+    serverBoot: undefined,
+    initialLocal: {},
+    fetchImpl: async (url) => {
+      assert.equal(url, '/api/ui-prefs');
+      return { ok: true, json: async () => ({ prefs: { sections: { switcher: false, quotas: false }, updatedAtMs: 5000 } }) };
+    },
+  });
+  await new Promise((r) => setTimeout(r, 15));
+  assert.equal(hD.ctx.CM_SECTIONS.isEnabled('switcher'), false);
+  assert.equal(hD.ctx.CM_SECTIONS.isEnabled('quotas'), false);
+  assert.equal(hD.byId.get('switcher-bar').classList.contains('cm-sec-hidden'), true);
 });

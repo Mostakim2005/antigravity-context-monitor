@@ -1,4 +1,5 @@
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readSync, statSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { ID_RE, findAllBrainDirs } from './lib.mjs';
@@ -1030,6 +1031,171 @@ export function saveCostPrefs(db, { currency = 'USD', fxRate = 1, monthlyFee = 0
     monthlyFee: Number(monthlyFee) >= 0 ? Number(monthlyFee) : 0,
   };
   db.prepare("INSERT OR REPLACE INTO kv (k, v) VALUES ('cost_prefs', ?)").run(JSON.stringify(next));
+  return next;
+}
+
+const VALID_UI_LANGS = new Set(['en', 'zh']);
+const VALID_UI_TABS = new Set(['session', 'cost', 'accounts', 'heatmap']);
+const VALID_UI_SCOPES = new Set(['conversation', 'project', '7d', '30d', 'all']);
+const VALID_BD_VIEWS = new Set(['models', 'projects', 'chats', '']);
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+export function resolveUiPrefsPath(env = process.env, platform = process.platform) {
+  const override = env.ANTIGRAVITY_CONTEXT_MONITOR_PREFS_PATH?.trim();
+  if (override) return override;
+  if (platform === 'win32') {
+    if (env.APPDATA?.trim()) {
+      return join(env.APPDATA.trim(), 'context-monitor', 'ui-prefs.json');
+    }
+    const base = env.USERPROFILE?.trim() || env.HOME?.trim() || homedir();
+    return join(base, '.gemini', 'context-monitor-ui-prefs.json');
+  }
+  if (platform === 'darwin') {
+    return join(homedir(), 'Library', 'Application Support', 'context-monitor', 'ui-prefs.json');
+  }
+  const xdgConfig = env.XDG_CONFIG_HOME?.trim() || join(homedir(), '.config');
+  return join(xdgConfig, 'context-monitor', 'ui-prefs.json');
+}
+
+function sanitizeSectionMap(raw) {
+  const out = {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  for (const [k, v] of Object.entries(raw)) {
+    if (typeof k !== 'string' || !k || k.length > 64 || UNSAFE_KEYS.has(k)) continue;
+    if (typeof v === 'boolean') out[k] = v;
+  }
+  return out;
+}
+
+function sanitizeScopePrefs(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const scope = VALID_UI_SCOPES.has(raw.scope) ? raw.scope : 'conversation';
+  const breakdownView = VALID_BD_VIEWS.has(raw.breakdownView) ? raw.breakdownView : 'models';
+  return {
+    scope,
+    breakdownView,
+    showPricing: Boolean(raw.showPricing),
+    showArchive: Boolean(raw.showArchive),
+    showCurrency: Boolean(raw.showCurrency),
+  };
+}
+
+function sanitizeSwitcherPrefs(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  return { lockMain: Boolean(raw.lockMain) };
+}
+
+function normalizeUiPrefs(raw) {
+  const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  return {
+    sections: sanitizeSectionMap(src.sections),
+    lang: VALID_UI_LANGS.has(src.lang) ? src.lang : null,
+    activeTab: VALID_UI_TABS.has(src.activeTab) ? src.activeTab : null,
+    scope: sanitizeScopePrefs(src.scope),
+    switcher: sanitizeSwitcherPrefs(src.switcher),
+    updatedAtMs: toInt(src.updatedAtMs),
+  };
+}
+
+function readUiPrefsFile(filePath) {
+  if (!filePath || !existsSync(filePath)) return null;
+  try {
+    const raw = readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '');
+    if (!raw.trim()) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    return normalizeUiPrefs(parsed);
+  } catch {
+    return null;
+  }
+}
+
+function writeUiPrefsFile(filePath, prefs) {
+  if (!filePath) return;
+  const payload = JSON.stringify(prefs, null, 2) + '\n';
+  const tmpPath = `${filePath}.tmp.${process.pid}`;
+  try {
+    mkdirSync(dirname(filePath), { recursive: true });
+    writeFileSync(tmpPath, payload, 'utf8');
+    renameSync(tmpPath, filePath);
+  } catch {
+    try { unlinkSync(tmpPath); } catch { /* ignore */ }
+    try {
+      mkdirSync(dirname(filePath), { recursive: true });
+      writeFileSync(filePath, payload, 'utf8');
+    } catch {
+      // Non-fatal if external prefs path is unavailable in a strict sandbox
+    }
+  }
+}
+
+function readUiPrefsDb(db) {
+  if (!db) return null;
+  try {
+    const row = db.prepare("SELECT v FROM kv WHERE k = 'ui_prefs_v1'").get();
+    if (!row?.v) return null;
+    const parsed = JSON.parse(row.v);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    return normalizeUiPrefs(parsed);
+  } catch {
+    return null;
+  }
+}
+
+function writeUiPrefsDb(db, prefs) {
+  if (!db) return;
+  db.prepare("INSERT OR REPLACE INTO kv (k, v) VALUES ('ui_prefs_v1', ?)").run(JSON.stringify(prefs));
+}
+
+export function getUiPrefs(db, { prefsPath } = {}) {
+  const resolvedPath = prefsPath === undefined ? resolveUiPrefsPath() : prefsPath;
+  const dbPrefs = readUiPrefsDb(db);
+  const filePrefs = readUiPrefsFile(resolvedPath);
+
+  if (!dbPrefs && !filePrefs) return normalizeUiPrefs({});
+  if (dbPrefs && !filePrefs) {
+    writeUiPrefsFile(resolvedPath, dbPrefs);
+    return dbPrefs;
+  }
+  if (!dbPrefs && filePrefs) {
+    writeUiPrefsDb(db, filePrefs);
+    return filePrefs;
+  }
+  if (filePrefs.updatedAtMs > dbPrefs.updatedAtMs) {
+    writeUiPrefsDb(db, filePrefs);
+    return filePrefs;
+  }
+  if (dbPrefs.updatedAtMs > filePrefs.updatedAtMs) {
+    writeUiPrefsFile(resolvedPath, dbPrefs);
+  }
+  return dbPrefs;
+}
+
+export function saveUiPrefs(db, patch = {}, { prefsPath } = {}) {
+  const resolvedPath = prefsPath === undefined ? resolveUiPrefsPath() : prefsPath;
+  const current = getUiPrefs(db, { prefsPath: resolvedPath });
+  const src = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
+
+  const next = {
+    sections:
+      src.sections && typeof src.sections === 'object' && !Array.isArray(src.sections)
+        ? { ...current.sections, ...sanitizeSectionMap(src.sections) }
+        : { ...current.sections },
+    lang: VALID_UI_LANGS.has(src.lang) ? src.lang : current.lang,
+    activeTab: VALID_UI_TABS.has(src.activeTab) ? src.activeTab : current.activeTab,
+    scope:
+      src.scope && typeof src.scope === 'object' && !Array.isArray(src.scope)
+        ? sanitizeScopePrefs({ ...(current.scope || {}), ...src.scope })
+        : current.scope,
+    switcher:
+      src.switcher && typeof src.switcher === 'object' && !Array.isArray(src.switcher)
+        ? sanitizeSwitcherPrefs({ ...(current.switcher || {}), ...src.switcher })
+        : current.switcher,
+    updatedAtMs: Math.max(Date.now(), (current.updatedAtMs || 0) + 1),
+  };
+
+  writeUiPrefsDb(db, next);
+  writeUiPrefsFile(resolvedPath, next);
   return next;
 }
 

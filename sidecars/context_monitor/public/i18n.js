@@ -131,10 +131,21 @@
     return `${lead}${out}${trail}`;
   }
 
+  let needsLangMigration = false;
+
   function readSavedLang() {
+    const serverLang = globalThis.CM_PREFS?.getServerPrefs?.()?.lang;
+    if (SUPPORTED.has(serverLang)) {
+      globalThis.CM_PREFS?.writeLocal?.(STORAGE_KEY, serverLang);
+      return serverLang;
+    }
     try {
-      const v = globalThis.localStorage?.getItem(STORAGE_KEY);
-      return SUPPORTED.has(v) ? v : 'en';
+      const v = globalThis.CM_PREFS?.readLocal?.(STORAGE_KEY) ?? globalThis.localStorage?.getItem(STORAGE_KEY);
+      if (SUPPORTED.has(v)) {
+        if (globalThis.CM_PREFS?.hasServerBootstrap?.()) needsLangMigration = true;
+        return v;
+      }
+      return 'en';
     } catch {
       return 'en';
     }
@@ -146,6 +157,7 @@
     } catch {
       // ignore storage failure
     }
+    globalThis.CM_PREFS?.saveServerPatch?.({ lang });
   }
 
   let currentLang = readSavedLang();
@@ -350,6 +362,10 @@
   }
 
   function boot() {
+    if (needsLangMigration) {
+      needsLangMigration = false;
+      globalThis.CM_PREFS?.saveServerPatch?.({ lang: currentLang });
+    }
     mountToggle();
     applyAll();
     startObserver();

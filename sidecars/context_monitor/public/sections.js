@@ -21,31 +21,70 @@
     { key: 'heatmap', en: 'Heatmap', zh: '历史热力图', defaultOn: true },
   ];
 
-  function loadPrefs() {
-    const prefs = {};
-    for (const d of SECTION_DEFS) prefs[d.key] = d.defaultOn;
+  function readLocalPrefs() {
     try {
-      const raw = JSON.parse(globalThis.localStorage?.getItem(STORAGE_KEY) || '{}');
-      if (raw && typeof raw === 'object') {
-        for (const d of SECTION_DEFS) {
-          if (typeof raw[d.key] === 'boolean') prefs[d.key] = raw[d.key];
-        }
+      const rawText = globalThis.CM_PREFS?.readLocal?.(STORAGE_KEY) ?? globalThis.localStorage?.getItem(STORAGE_KEY);
+      const raw = JSON.parse(rawText || '{}');
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+      return raw;
+    } catch {
+      return null;
+    }
+  }
+
+  function writeLocalPrefs(nextPrefs) {
+    const serialized = JSON.stringify(nextPrefs);
+    if (globalThis.CM_PREFS?.writeLocal) {
+      globalThis.CM_PREFS.writeLocal(STORAGE_KEY, serialized);
+      return;
+    }
+    try {
+      globalThis.localStorage?.setItem(STORAGE_KEY, serialized);
+    } catch {
+      // ignore storage errors
+    }
+  }
+
+  function applySectionMap(target, source) {
+    if (!source || typeof source !== 'object') return false;
+    let applied = false;
+    for (const d of SECTION_DEFS) {
+      if (typeof source[d.key] === 'boolean') {
+        target[d.key] = source[d.key];
+        applied = true;
       }
-    } catch {
-      // ignore storage errors
     }
-    return prefs;
+    return applied;
   }
 
-  function savePrefs(prefs) {
-    try {
-      globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify(prefs));
-    } catch {
-      // ignore storage errors
+  function loadPrefs() {
+    const out = {};
+    for (const d of SECTION_DEFS) out[d.key] = d.defaultOn;
+
+    const serverPrefs = globalThis.CM_PREFS?.getServerPrefs?.() || globalThis.__CM_UI_PREFS__;
+    const hasBootstrap = Boolean(globalThis.CM_PREFS?.hasServerBootstrap?.() || serverPrefs);
+    if (serverPrefs && applySectionMap(out, serverPrefs.sections)) {
+      writeLocalPrefs(out);
+      return { prefs: out, needsMigration: false, hasBootstrap };
     }
+
+    const localRaw = readLocalPrefs();
+    const hasLocal = applySectionMap(out, localRaw);
+    return {
+      prefs: out,
+      needsMigration: hasBootstrap && hasLocal,
+      hasBootstrap,
+    };
   }
 
-  let prefs = loadPrefs();
+  function savePrefs(nextPrefs) {
+    writeLocalPrefs(nextPrefs);
+    globalThis.CM_PREFS?.saveServerPatch?.({ sections: { ...nextPrefs } });
+  }
+
+  const initState = loadPrefs();
+  let prefs = initState.prefs;
+  let userDirty = false;
   let drawerOpen = false;
   const listeners = new Set();
 
@@ -150,6 +189,7 @@
       const input = e.target.closest('input[data-sec-key]');
       if (!input) return;
       const key = input.dataset.secKey;
+      userDirty = true;
       prefs[key] = Boolean(input.checked);
       savePrefs(prefs);
       applyVisibility();
@@ -160,6 +200,7 @@
     });
     drawer.addEventListener('click', (e) => {
       if (!e.target.closest('#cm-sec-reset')) return;
+      userDirty = true;
       for (const d of SECTION_DEFS) prefs[d.key] = true;
       savePrefs(prefs);
       applyVisibility();
@@ -174,8 +215,28 @@
     applyVisibility();
   }
 
+  function syncServerPrefsOnBoot() {
+    if (initState.needsMigration) {
+      globalThis.CM_PREFS?.saveServerPatch?.({ sections: { ...prefs } });
+      return;
+    }
+    if (!initState.hasBootstrap && globalThis.CM_PREFS?.fetchServerPrefs) {
+      globalThis.CM_PREFS.fetchServerPrefs().then((serverPrefs) => {
+        if (userDirty || !serverPrefs?.sections) return;
+        if (!applySectionMap(prefs, serverPrefs.sections)) return;
+        writeLocalPrefs(prefs);
+        applyVisibility();
+        renderControls();
+        for (const fn of listeners) {
+          try { fn({ ...prefs }); } catch { /* ignore */ }
+        }
+      }).catch(() => {});
+    }
+  }
+
   function boot() {
     mountUi();
+    syncServerPrefsOnBoot();
     globalThis.CM_I18N?.onChange?.(() => renderControls());
   }
 

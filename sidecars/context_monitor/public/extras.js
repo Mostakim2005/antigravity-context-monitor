@@ -27,15 +27,41 @@
     }
   }
 
-  const switchState = loadJson(SWITCH_KEY, { pinnedConvId: '', lockMain: false });
-  const scopeState = loadJson(SCOPE_KEY, {
+  const DEFAULT_SCOPE_STATE = {
     scope: 'conversation',
     breakdownView: 'models', // 'models' | 'projects' | 'chats' | ''
     showPricing: false,
     showArchive: false,
     showCurrency: false,
-  });
+  };
+
+  const serverBootPrefs = globalThis.CM_PREFS?.getServerPrefs?.();
+  const hasServerBoot = Boolean(globalThis.CM_PREFS?.hasServerBootstrap?.());
+  const switchState = loadJson(SWITCH_KEY, { pinnedConvId: '', lockMain: false });
+  if (typeof serverBootPrefs?.switcher?.lockMain === 'boolean') {
+    switchState.lockMain = serverBootPrefs.switcher.lockMain;
+    saveJson(SWITCH_KEY, switchState);
+  } else if (hasServerBoot && switchState.lockMain) {
+    globalThis.CM_PREFS?.saveServerPatch?.({ switcher: { lockMain: true } });
+  }
+
+  let scopeState;
+  if (serverBootPrefs?.scope && typeof serverBootPrefs.scope === 'object') {
+    scopeState = { ...DEFAULT_SCOPE_STATE, ...serverBootPrefs.scope };
+    saveJson(SCOPE_KEY, scopeState);
+  } else {
+    scopeState = loadJson(SCOPE_KEY, DEFAULT_SCOPE_STATE);
+    const hasLocalScope = Boolean(globalThis.CM_PREFS?.readLocal?.(SCOPE_KEY));
+    if (hasServerBoot && hasLocalScope) {
+      globalThis.CM_PREFS?.saveServerPatch?.({ scope: scopeState });
+    }
+  }
   if (!VALID_SCOPES.includes(scopeState.scope)) scopeState.scope = 'conversation';
+
+  function saveScopeState() {
+    saveJson(SCOPE_KEY, scopeState);
+    globalThis.CM_PREFS?.saveServerPatch?.({ scope: { ...scopeState } });
+  }
 
   const runtime = {
     workspaceUris: [],
@@ -187,9 +213,17 @@
     } catch {
       // ignore
     }
+    if (VALID_TABS.includes(tab) && globalThis.CM_PREFS?.getServerPrefs?.()?.activeTab !== tab) {
+      globalThis.CM_PREFS?.saveServerPatch?.({ activeTab: tab });
+    }
   }
 
   function loadTabPref() {
+    const serverTab = globalThis.CM_PREFS?.getServerPrefs?.()?.activeTab;
+    if (VALID_TABS.includes(serverTab)) {
+      try { globalThis.localStorage?.setItem(TAB_KEY, serverTab); } catch { /* ignore */ }
+      return serverTab;
+    }
     try {
       const t = globalThis.localStorage?.getItem(TAB_KEY);
       return VALID_TABS.includes(t) ? t : 'session';
@@ -1178,6 +1212,7 @@
       switchState.lockMain = !switchState.lockMain;
       if (switchState.lockMain) switchState.pinnedConvId = '';
       saveJson(SWITCH_KEY, switchState);
+      globalThis.CM_PREFS?.saveServerPatch?.({ switcher: { lockMain: switchState.lockMain } });
       refreshConversations(true);
       onTargetConvChanged();
     });
@@ -1188,7 +1223,7 @@
         const nextScope = scopeBtn.dataset.cmScope;
         if (VALID_SCOPES.includes(nextScope) && scopeState.scope !== nextScope) {
           scopeState.scope = nextScope;
-          saveJson(SCOPE_KEY, scopeState);
+          saveScopeState();
           renderScopeCost();
           refreshScope(true);
         }
@@ -1198,7 +1233,7 @@
       if (e.target.closest('[data-bd-view]')) {
         const nextView = e.target.closest('[data-bd-view]').dataset.bdView;
         scopeState.breakdownView = scopeState.breakdownView === nextView ? '' : nextView;
-        saveJson(SCOPE_KEY, scopeState);
+        saveScopeState();
         renderScopeCost();
         return;
       }
@@ -1216,14 +1251,14 @@
 
       if (e.target.closest('#cm-toggle-currency')) {
         scopeState.showCurrency = !scopeState.showCurrency;
-        saveJson(SCOPE_KEY, scopeState);
+        saveScopeState();
         renderScopeCost();
         return;
       }
 
       if (e.target.closest('#cm-toggle-pricing')) {
         scopeState.showPricing = !scopeState.showPricing;
-        saveJson(SCOPE_KEY, scopeState);
+        saveScopeState();
         if (scopeState.showPricing && !runtime.pricingCatalog) {
           await refreshPricingCatalog();
         } else {
@@ -1234,7 +1269,7 @@
 
       if (e.target.closest('#cm-toggle-archive')) {
         scopeState.showArchive = !scopeState.showArchive;
-        saveJson(SCOPE_KEY, scopeState);
+        saveScopeState();
         renderScopeCost();
         return;
       }

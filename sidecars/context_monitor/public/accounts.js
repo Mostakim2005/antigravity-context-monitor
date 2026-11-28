@@ -313,7 +313,7 @@
                 </div>
               </div>
               <div class="acct-usage-sub">
-                ${u.calls || 0} ${lang === 'en' ? 'calls' : '次'} · ${lang === 'en' ? 'In' : '输入'} ${fmtTok(u.inputTokens || 0)} · ${lang === 'en' ? 'Cache' : '缓存'} ${fmtTok(u.cacheReadTokens || 0)} · ${lang === 'en' ? 'Out' : '输出'} ${fmtTok(u.outputTokens || 0)}
+                ${u.calls || 0} ${lang === 'en' ? 'calls' : '次'} · ${lang === 'en' ? 'In' : '输入'} <span class="cm-tok-pill cm-pill-xs">${fmtTok(u.inputTokens || 0)}</span> · ${lang === 'en' ? 'Cache' : '缓存'} <span class="cm-tok-pill cm-pill-xs">${fmtTok(u.cacheReadTokens || 0)}</span> · ${lang === 'en' ? 'Out' : '输出'} <span class="cm-tok-pill cm-pill-xs">${fmtTok(u.outputTokens || 0)}</span>
               </div>
             </div>
 

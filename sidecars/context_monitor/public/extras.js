@@ -113,6 +113,13 @@
     return String(Math.round(v));
   }
 
+  function fmtMillions(n) {
+    const v = Number(n) || 0;
+    if (v <= 0) return '0.00M';
+    if (v >= 1_000) return `${(v / 1_000_000).toFixed(2)}M`;
+    return `${(v / 1_000_000).toFixed(3)}M`;
+  }
+
   function fmtUsd(n) {
     const v = Number(n) || 0;
     if (v <= 0) return '$0.00';
@@ -692,7 +699,7 @@
 
       <div class="sc-hero">
         <div class="sc-hero-left">
-          <div class="sc-cost-main">${esc(fmtMoney(totals.totalCost))}</div>
+          <div class="sc-cost-main cm-cost-pill cm-pill-hero">${esc(fmtMoney(totals.totalCost))}</div>
           <div class="sc-cost-sub">
             ${totals.calls} ${lang === 'en' ? 'calls' : '次'} · ${chatsCount} ${lang === 'en' ? 'chats' : '会话'} · <span class="cm-tok-pill sc-tok-inline">${fmtTok(totals.totalTokens)} tok</span>
           </div>
@@ -791,7 +798,7 @@
             <i class="bd-dot" style="background:${esc(s.color)}"></i>
             <span class="bd-name">${esc(lang === 'en' ? s.en : s.zh)}</span>
           </span>
-          <span class="bd-item-r"><strong>${fmtTok(s.tokens)}</strong> <span class="bd-pct">${s.pctOfUsed}%</span></span>
+          <span class="bd-item-r"><span class="cm-tok-pill cm-pill-xs">${fmtTok(s.tokens)}</span> <span class="bd-pct">${s.pctOfUsed}%</span></span>
         </div>
       `,
       )
@@ -821,7 +828,7 @@
                 return `
               <div class="bd-top-row" title="${esc(tip)}">
                 <span class="bd-top-title">${esc(it.title)}</span>
-                <span class="bd-top-val">${fmtTok(it.tokens)} · ${it.pctOfUsed}%</span>
+                <span class="bd-top-val"><span class="cm-tok-pill cm-pill-xs">${fmtTok(it.tokens)}</span> · ${it.pctOfUsed}%</span>
               </div>`;
               },
             )
@@ -1152,12 +1159,16 @@
     const ha = runtime.heatmapAnalytics;
     const streaks = ha?.streaks || { current: 0, longest: 0 };
     const p = ha?.periods || { week: {}, month: {}, year: {}, all: {} };
+    const isCost = runtime.hmMetric === 'cost';
+
+    const pillCls = isCost ? 'cm-cost-pill' : 'cm-tok-pill';
+    const fmtMetric = (bucket) => (isCost ? fmtUsd(bucket?.cost || 0) : fmtMillions(bucket?.tokens || 0));
 
     box.innerHTML = `
       <div class="hm-ana-top">
         <div class="sc-pills" style="margin-bottom:0">
-          <button type="button" class="preset-btn${runtime.hmMetric === 'tokens' ? ' active' : ''}" data-hm-metric="tokens">${lang === 'en' ? 'Tokens' : 'Token'}</button>
-          <button type="button" class="preset-btn${runtime.hmMetric === 'cost' ? ' active' : ''}" data-hm-metric="cost">${lang === 'en' ? '$ Cost' : '$ 费用'}</button>
+          <button type="button" class="preset-btn${!isCost ? ' active' : ''}" data-hm-metric="tokens">${lang === 'en' ? 'Tokens' : 'Token'}</button>
+          <button type="button" class="preset-btn${isCost ? ' active' : ''}" data-hm-metric="cost">${lang === 'en' ? '$ Cost' : '$ 费用'}</button>
         </div>
         <div class="sc-pills" style="margin-bottom:0">
           <button type="button" class="preset-btn${runtime.hmSource === 'all' ? ' active' : ''}" data-hm-source="all">${lang === 'en' ? 'All' : '全部'}</button>
@@ -1167,29 +1178,61 @@
       </div>
       <div class="hm-ana-stats">
         <span class="hm-ana-pill">${lang === 'en' ? 'Streak' : '连续'}: <strong>${streaks.current}d</strong> (${lang === 'en' ? 'Max' : '最长'} ${streaks.longest}d)</span>
-        <span class="cm-tok-pill">7d: ${fmtTok(p.week?.tokens || 0)}</span>
-        <span class="cm-tok-pill">30d: ${fmtTok(p.month?.tokens || 0)}</span>
-        <span class="cm-cost-pill">${lang === 'en' ? 'Year' : '今年'}: ${fmtUsd(p.year?.cost || 0)}</span>
+        <span class="${pillCls}">7d: ${fmtMetric(p.week)}</span>
+        <span class="${pillCls}">30d: ${fmtMetric(p.month)}</span>
+        <span class="${pillCls}">${lang === 'en' ? 'Year' : '今年'}: ${fmtMetric(p.year)}</span>
       </div>
     `;
 
-    // Apply SQLite cost/source shading onto existing #hm-grid cells
+    // Apply SQLite cost/source shading and summary pills onto existing #hm-grid & KPI cards
     const daily = ha?.daily;
+    if (daily) {
+      globalThis.CM_HEATMAP?.setAnalytics?.(daily);
+    }
     const grid = document.getElementById('hm-grid');
     if (!grid || !daily) return;
     const cells = [...grid.querySelectorAll('.hm-cell[data-date]')];
     if (cells.length === 0) return;
 
     let maxVal = 0;
+    let rangeTokens = 0;
+    let rangeCost = 0;
+    let peakTokens = 0;
+    let peakCost = 0;
     for (const c of cells) {
       const rec = daily[c.dataset.date];
-      const v = rec ? (runtime.hmMetric === 'cost' ? rec.totalCost : rec.totalTokens) : 0;
+      if (!rec) continue;
+      rangeTokens += Number(rec.totalTokens) || 0;
+      rangeCost += Number(rec.totalCost) || 0;
+      if ((Number(rec.totalTokens) || 0) > peakTokens) peakTokens = Number(rec.totalTokens) || 0;
+      if ((Number(rec.totalCost) || 0) > peakCost) peakCost = Number(rec.totalCost) || 0;
+      const v = isCost ? rec.totalCost : rec.totalTokens;
       if (v > maxVal) maxVal = v;
     }
+
+    const hmTotalEl = document.getElementById('hm-total');
+    const hmTotalLabel = hmTotalEl?.previousElementSibling;
+    if (hmTotalLabel) {
+      hmTotalLabel.textContent = isCost
+        ? (lang === 'en' ? '16-Week Cost' : '近 16 周费用')
+        : (lang === 'en' ? '16-Week Tokens' : '近 16 周全量 Token');
+    }
+    if (hmTotalEl) {
+      hmTotalEl.innerHTML = isCost
+        ? `<span class="cm-cost-pill cm-pill-sm">${fmtUsd(rangeCost)}</span>`
+        : `<span class="cm-tok-pill cm-pill-sm">${fmtMillions(rangeTokens)}</span>`;
+    }
+    const hmPeakEl = document.getElementById('hm-peak');
+    if (hmPeakEl) {
+      hmPeakEl.innerHTML = isCost
+        ? `<span>${lang === 'en' ? 'Peak' : '峰值'}</span> <span class="cm-cost-pill cm-pill-xs">${fmtUsd(peakCost)}</span>`
+        : `<span>${lang === 'en' ? 'Peak' : '峰值'}</span> <span class="cm-tok-pill cm-pill-xs">${fmtMillions(peakTokens)}</span>`;
+    }
+
     for (const c of cells) {
       const dk = c.dataset.date;
       const rec = daily[dk];
-      const v = rec ? (runtime.hmMetric === 'cost' ? rec.totalCost : rec.totalTokens) : 0;
+      const v = rec ? (isCost ? rec.totalCost : rec.totalTokens) : 0;
       for (const lv of ['lv0', 'lv1', 'lv2', 'lv3', 'lv4']) c.classList.remove(lv);
       let lv = 0;
       if (v > 0 && maxVal > 0) {
@@ -1201,7 +1244,7 @@
       }
       c.classList.add(`lv${lv}`);
       if (rec && rec.calls > 0) {
-        c.title = `${dk}: ${fmtTok(rec.totalTokens)} tok · ${fmtUsd(rec.totalCost)} (${rec.calls} calls)`;
+        c.title = `${dk}: ${fmtMillions(rec.totalTokens)} · ${fmtUsd(rec.totalCost)} (${rec.calls} calls)`;
       }
     }
   }
@@ -1552,6 +1595,7 @@
       renderScopeCost();
       renderBreakdown();
       renderDiagnostics();
+      if (runtime.heatmapAnalytics) renderHeatmapAnalytics();
     });
 
     globalThis.CM_SECTIONS?.onChange?.((prefs) => {
@@ -1587,5 +1631,8 @@
   globalThis.CM_TABS = { activateTab, getActiveTab: loadTabPref };
   globalThis.CM_EXTRAS = {
     getEffectiveConvId,
+    onHeatmapRendered: () => {
+      if (runtime.heatmapAnalytics) renderHeatmapAnalytics();
+    },
   };
 })();

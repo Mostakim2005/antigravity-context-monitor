@@ -55,16 +55,20 @@ html, body {
   width: 100%;
   max-width: 640px;
   margin: 0 auto;
-  padding: 6px 8px 14px;
+  padding: 5px 6px 14px;
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-width: 0;
+  overflow-x: hidden;
 }
 
 .header {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .header-top {
@@ -72,8 +76,9 @@ html, body {
   align-items: center;
   justify-content: space-between;
   flex-wrap: nowrap;
-  gap: 4px;
+  gap: 3px;
   min-width: 0;
+  max-width: 100%;
 }
 
 .title-wrap {
@@ -82,15 +87,17 @@ html, body {
   flex-wrap: nowrap;
   gap: 3px;
   min-width: 0;
-  flex-shrink: 0;
+  flex-shrink: 1;
 }
 
 .title {
   margin: 0;
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 700;
   letter-spacing: -0.02em;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .live-pill {
@@ -101,9 +108,10 @@ html, body {
   border-radius: 999px;
   background: var(--cm-muted);
   border: 1px solid var(--cm-border);
-  font-size: 9px;
+  font-size: 8.5px;
   color: var(--cm-fg-muted);
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .live-dot {
@@ -119,7 +127,7 @@ html, body {
 
 .conv-badge {
   font-family: var(--cm-mono);
-  font-size: 9px;
+  font-size: 8.5px;
   color: var(--cm-fg-muted);
   padding: 1px 3px;
   border-radius: 4px;
@@ -386,7 +394,7 @@ html, body {
   gap: 4px;
 }
 
-.legend-item strong {
+.legend-item strong:not(.cm-tok-pill) {
   color: var(--cm-fg);
   font-family: var(--cm-mono);
   font-weight: 600;
@@ -773,10 +781,10 @@ html, body {
   background: transparent;
   color: var(--cm-fg-muted);
   font-family: var(--cm-font);
-  font-size: 9px;
+  font-size: 8.5px;
   font-weight: 600;
   line-height: 1;
-  padding: 2px 3.5px;
+  padding: 2px 3px;
   border-radius: 4px;
   cursor: pointer;
   white-space: nowrap;
@@ -1469,7 +1477,7 @@ html, body {
 }
 
 .acct-pill-name {
-  max-width: 48px;
+  max-width: 42px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -1484,7 +1492,7 @@ html, body {
 
 .acct-pill-tok {
   font-family: var(--cm-mono);
-  font-size: 9px;
+  font-size: 8.5px;
   font-weight: 700;
   padding: 0 3px;
   border-radius: 999px;
@@ -1795,21 +1803,21 @@ html, body {
 
 /* Phase 3: Highlighted Token & Cost Pills, Breakdown Switcher, Quotas, & Heatmap Analytics */
 :root {
-  --cm-tok-fg: #0369a1;
-  --cm-tok-bg: color-mix(in srgb, #0284c7 11%, var(--cm-card));
-  --cm-tok-bd: color-mix(in srgb, #0284c7 34%, var(--cm-border));
-  --cm-cost-fg: #9a5204;
-  --cm-cost-bg: color-mix(in srgb, #d97706 11%, var(--cm-card));
-  --cm-cost-bd: color-mix(in srgb, #d97706 36%, var(--cm-border));
+  --cm-tok-fg: #075985;
+  --cm-tok-bg: color-mix(in srgb, #0284c7 13%, var(--cm-card));
+  --cm-tok-bd: color-mix(in srgb, #0284c7 48%, var(--cm-border));
+  --cm-cost-fg: #92400e;
+  --cm-cost-bg: color-mix(in srgb, #d97706 13%, var(--cm-card));
+  --cm-cost-bd: color-mix(in srgb, #d97706 50%, var(--cm-border));
 }
 
 :root[data-theme="dark"] {
   --cm-tok-fg: #38bdf8;
-  --cm-tok-bg: color-mix(in srgb, #38bdf8 13%, var(--cm-card));
-  --cm-tok-bd: color-mix(in srgb, #38bdf8 38%, var(--cm-border));
+  --cm-tok-bg: color-mix(in srgb, #38bdf8 14%, var(--cm-card));
+  --cm-tok-bd: color-mix(in srgb, #38bdf8 52%, var(--cm-border));
   --cm-cost-fg: #fbbf24;
-  --cm-cost-bg: color-mix(in srgb, #f59e0b 13%, var(--cm-card));
-  --cm-cost-bd: color-mix(in srgb, #f59e0b 38%, var(--cm-border));
+  --cm-cost-bg: color-mix(in srgb, #f59e0b 14%, var(--cm-card));
+  --cm-cost-bd: color-mix(in srgb, #f59e0b 52%, var(--cm-border));
 }
 
 .cm-tok-pill,
@@ -1823,6 +1831,33 @@ html, body {
   border-radius: 999px;
   white-space: nowrap;
   line-height: 1.35;
+}
+
+.cm-pill-xs {
+  font-size: 9.5px;
+  padding: 0 5px;
+  line-height: 1.35;
+}
+
+.cm-pill-sm {
+  font-size: 10.5px;
+  padding: 1px 6px;
+  line-height: 1.35;
+}
+
+.cm-pill-hero {
+  font-size: 13px;
+  font-weight: 700;
+  padding: 1px 7px;
+  line-height: 1.25;
+}
+
+.hero-num.cm-pill-hero {
+  font-size: 16px;
+}
+
+.remain-num.cm-pill-sm {
+  font-size: 12.5px;
 }
 
 .cm-tok-pill {

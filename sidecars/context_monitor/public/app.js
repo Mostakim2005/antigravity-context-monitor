@@ -44,6 +44,21 @@
     return String(Math.round(v));
   }
 
+  function fmtMillions(n) {
+    const v = Number(n) || 0;
+    if (v <= 0) return '0.00M';
+    if (v >= 1_000) return `${(v / 1_000_000).toFixed(2)}M`;
+    return `${(v / 1_000_000).toFixed(3)}M`;
+  }
+
+  function fmtUsd(n) {
+    const v = Number(n) || 0;
+    if (v <= 0) return '$0.00';
+    if (v < 0.01) return `$${v.toFixed(4)}`;
+    if (v < 10) return `$${v.toFixed(3)}`;
+    return `$${v.toFixed(2)}`;
+  }
+
   function fmtExact(n) {
     return (Number(n) || 0).toLocaleString('en-US');
   }
@@ -139,7 +154,7 @@
       const deltaSign = t.turnDelta >= 0 ? '+' : '';
       const bigDelta = t.turnDelta >= 20000 ? 'big' : '';
       const deltaBadge = t.firstCall
-        ? `<span class="step-delta ${bigDelta}">${deltaSign}${fmtTokens(t.turnDelta)}</span>`
+        ? `<span class="step-delta ${bigDelta} cm-tok-pill cm-pill-xs">${deltaSign}${fmtTokens(t.turnDelta)}</span>`
         : '';
 
       const speedParts = [];
@@ -149,8 +164,8 @@
       if (turnTps != null) speedParts.push(fmtTps(turnTps));
 
       const statsLine = t.firstCall
-        ? `<span>首步 Cache ${fmtTokens(t.firstCall.cacheReadTokens)} / ${fmtTokens(t.firstCall.contextUsed)}</span>` +
-          `<span>结束 ${fmtTokens(t.endContextUsed)}</span>` +
+        ? `<span>首步 Cache</span> <span class="cm-tok-pill cm-pill-xs">${fmtTokens(t.firstCall.cacheReadTokens)}</span><span> / </span><span class="cm-tok-pill cm-pill-xs">${fmtTokens(t.firstCall.contextUsed)}</span>` +
+          `<span>结束</span> <span class="cm-tok-pill cm-pill-xs">${fmtTokens(t.endContextUsed)}</span>` +
           `<span>${t.modelCalls} 次调用</span>` +
           (speedParts.length > 0 ? `<span>${esc(speedParts.join(' · '))}</span>` : '')
         : '<span>等待首步模型响应…</span>';
@@ -281,13 +296,13 @@
   function renderHeatmap(hm) {
     state.heatmapData = hm;
     const totals = hm.totals || {};
-    $('hm-total').textContent = fmtTokens(totals.totalTokens);
+    $('hm-total').innerHTML = `<span class="cm-tok-pill cm-pill-sm">${fmtMillions(totals.totalTokens)}</span>`;
     $('hm-total').title = `${fmtExact(totals.totalTokens)} tokens`;
     $('hm-range').textContent = `${hm.rangeStart?.slice(5) || ''} ~ ${hm.rangeEnd?.slice(5) || ''}`;
     $('hm-days').textContent = `${totals.activeDays ?? 0} 天`;
     $('hm-sessions').textContent = `${totals.sessions ?? 0} 个会话`;
     $('hm-calls').textContent = fmtExact(totals.calls ?? 0);
-    $('hm-peak').textContent = `峰值 ${fmtTokens(hm.maxDayTokens)}`;
+    $('hm-peak').innerHTML = `<span>峰值</span> <span class="cm-tok-pill cm-pill-xs">${fmtMillions(hm.maxDayTokens)}</span>`;
 
     const days = hm.days || [];
     const monthsEl = $('hm-months');
@@ -326,6 +341,7 @@
     }).join('');
 
     renderHeatmapDetail(defaultDay);
+    globalThis.CM_EXTRAS?.onHeatmapRendered?.();
   }
 
   async function renderHeatmapDetail(day) {
@@ -339,13 +355,18 @@
       return;
     }
 
+    const dayCost = state.heatmapDailyAnalytics?.[day.date]?.totalCost;
+    const costHtml = typeof dayCost === 'number' && dayCost > 0
+      ? ` <span class="cm-cost-pill cm-pill-xs">${fmtUsd(dayCost)}</span>`
+      : '';
+
     const baseHtml =
-      `<strong>${esc(day.date)}</strong> · 共 ${fmtTokens(day.totalTokens)} (${day.calls} 次调用 · ${day.sessions} 会话)<br>` +
-      `Cache ${fmtTokens(day.cacheReadTokens)} · 新增 ${fmtTokens(day.inputTokens)} · 输出 ${fmtTokens(day.outputTokens)}`;
+      `<strong>${esc(day.date)}</strong><span> · 共 </span><span class="cm-tok-pill cm-pill-xs">${fmtMillions(day.totalTokens)}</span>${costHtml}<span> (${day.calls} 次调用 · ${day.sessions} 会话)</span><br>` +
+      `<span>Cache </span><span class="cm-tok-pill cm-pill-xs">${fmtMillions(day.cacheReadTokens)}</span><span> · 新增 </span><span class="cm-tok-pill cm-pill-xs">${fmtMillions(day.inputTokens)}</span><span> · 输出 </span><span class="cm-tok-pill cm-pill-xs">${fmtMillions(day.outputTokens)}</span>`;
 
     let models = state.dayModelsCache.get(day.date);
     if (!models) {
-      el.innerHTML = `${baseHtml}<br>模型：查询中…`;
+      el.innerHTML = `${baseHtml}<br><span>模型：查询中…</span>`;
       try {
         const res = await apiGet(`/api/heatmap/day?date=${encodeURIComponent(day.date)}`);
         models = Array.isArray(res?.models) ? res.models : [];
@@ -357,9 +378,9 @@
     }
 
     const modelText = models.length > 0
-      ? models.map((m) => `${esc(m.model)} (${m.calls}次 · ${fmtTokens(m.totalTokens)})`).join(' · ')
-      : '暂无模型 ID 记录';
-    el.innerHTML = `${baseHtml}<br>模型：${modelText}`;
+      ? models.map((m) => `<span>${esc(m.model)} (</span><span>${m.calls}次</span><span> · </span><span class="cm-tok-pill cm-pill-xs">${fmtMillions(m.totalTokens)}</span><span>)</span>`).join(' · ')
+      : '<span>暂无模型 ID 记录</span>';
+    el.innerHTML = `${baseHtml}<br><span>模型：</span>${modelText}`;
   }
 
   async function refreshHeatmap() {
@@ -429,6 +450,17 @@
       if (state.activeTab === 'session') poll();
     }, POLL_MS);
   }
+
+  globalThis.CM_HEATMAP = {
+    setAnalytics: (dailyMap) => {
+      state.heatmapDailyAnalytics = dailyMap || null;
+      if (state.heatmapData && state.selectedDate) {
+        const day = (state.heatmapData.days || []).find((d) => d.date === state.selectedDate);
+        if (day) renderHeatmapDetail(day);
+      }
+    },
+    getData: () => state.heatmapData,
+  };
 
   init();
 })();

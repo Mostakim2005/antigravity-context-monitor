@@ -68,6 +68,14 @@
     '历史热力图加载失败': 'Failed to load heatmap',
     '模型：查询中…': 'Models: loading…',
     '重试中': 'Retrying',
+    '近 16 周费用': '16-Week Cost',
+    '峰值': 'Peak',
+    '· 共': '· Total',
+    '· 新增': '· Fresh',
+    '· 输出': '· Output',
+    '模型：': 'Models:',
+    '首步 Cache': '1st step Cache',
+    '结束': 'End',
   };
 
   const MONTHS_EN = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -94,6 +102,8 @@
     [/^(\d+) 天$/, '$1 days'],
     [/^(\d+) 个会话$/, '$1 sessions'],
     [/^峰值 (.+)$/, 'Peak $1'],
+    [/^\((\d+) 次调用 · (\d+) 会话\)$/, '($1 calls · $2 sessions)'],
+    [/^(\d+)次$/, '$1×'],
     [/^(1[0-2]|[1-9])月$/, (_, m) => MONTHS_EN[Number(m)] || `${m}`],
     [/^(\d{4}-\d{2}-\d{2}): (.+?) tokens \((\d+) 次调用\)$/, '$1: $2 tokens ($3 calls)'],
     [/^(\d{4}-\d{2}-\d{2}) · 无模型调用$/, '$1 · No model calls'],

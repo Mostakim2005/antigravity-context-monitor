@@ -1061,3 +1061,106 @@ test('breakdown enriches CODE_ACTION items with bilingual hover explanations and
   assert.ok(generic.detailEn.includes('file edit, write, diff'));
   assert.ok(generic.detailZh.includes('文件编辑、写入或 Diff'));
 });
+
+test('heatmap analytics switches 7d/30d/Year/16-Week/Peak between M token pills and $ cost pills', async () => {
+  const testDir = dirname(fileURLToPath(import.meta.url));
+  const extrasSrc = readFileSync(join(testDir, '..', 'public', 'extras.js'), 'utf-8');
+  const today = new Date().toISOString().slice(0, 10);
+
+  const elements = new Map();
+  let clickHandler = null;
+  const makeNode = (initId = '') => {
+    const node = {
+      _id: initId,
+      innerHTML: '',
+      textContent: '',
+      title: '',
+      dataset: { date: today },
+      classList: { toggle() {}, add() {}, remove() {}, contains: () => false },
+      addEventListener(ev, fn) {
+        if (this._id === 'cm-hm-analytics' && ev === 'click') clickHandler = fn;
+      },
+      querySelector: () => null,
+      querySelectorAll: () => (node._id === 'hm-grid' ? [node] : []),
+      appendChild() {},
+      insertBefore() {},
+      closest: () => null,
+      previousElementSibling: { textContent: '' },
+    };
+    Object.defineProperty(node, 'id', {
+      get() { return this._id; },
+      set(v) { this._id = v; if (v) elements.set(v, this); },
+    });
+    if (initId) elements.set(initId, node);
+    return node;
+  };
+  for (const id of ['view-session', 'dashboard', 'view-heatmap', 'hm-grid', 'hm-total', 'hm-peak']) {
+    makeNode(id);
+  }
+
+  const hmTotal = elements.get('hm-total');
+  const hmPeak = elements.get('hm-peak');
+  const ctx = {
+    globalThis: {},
+    URLSearchParams,
+    CM_I18N: { getLang: () => 'en', onChange: () => {} },
+    CM_SECTIONS: { isEnabled: () => true, applyVisibility: () => {}, onChange: () => {} },
+    sidecar: {
+      fetch: async (url) => {
+        if (url.startsWith('/api/heatmap/analytics')) {
+          return {
+            ok: true,
+            json: async () => ({
+              streaks: { current: 3, longest: 5 },
+              periods: {
+                week: { tokens: 500_000, cost: 1.25, calls: 10 },
+                month: { tokens: 946_820_000, cost: 42.5, calls: 200 },
+                year: { tokens: 3_791_170_000, cost: 249.53, calls: 1000 },
+              },
+              daily: {
+                [today]: { date: today, totalTokens: 440_140_000, totalCost: 18.4, calls: 50, sessions: 3 },
+              },
+            }),
+          };
+        }
+        return { ok: true, json: async () => ({}) };
+      },
+    },
+    document: {
+      readyState: 'complete',
+      getElementById: (id) => elements.get(id) || null,
+      querySelector: () => null,
+      createElement: () => makeNode(`dyn-${elements.size}`),
+      addEventListener() {},
+    },
+    setTimeout,
+    clearTimeout,
+    setInterval: () => 1,
+    clearInterval: () => {},
+  };
+  ctx.globalThis = ctx;
+
+  vm.runInNewContext(extrasSrc, ctx);
+  await new Promise((r) => setTimeout(r, 10));
+
+  const anaNode = elements.get('cm-hm-analytics');
+  assert.ok(anaNode);
+  assert.equal(typeof clickHandler, 'function');
+
+  // Switch source to fetch analytics in Tokens mode
+  clickHandler({ target: { closest: (sel) => (sel === '[data-hm-source]' ? { dataset: { hmSource: 'all' } } : null) } });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.ok(anaNode.innerHTML.includes('cm-tok-pill">7d: 0.50M'));
+  assert.ok(anaNode.innerHTML.includes('cm-tok-pill">30d: 946.82M'));
+  assert.ok(anaNode.innerHTML.includes('cm-tok-pill">Year: 3791.17M'));
+  assert.ok(hmTotal.innerHTML.includes('cm-tok-pill') && hmTotal.innerHTML.includes('440.14M'));
+  assert.ok(hmPeak.innerHTML.includes('cm-tok-pill') && hmPeak.innerHTML.includes('440.14M'));
+
+  // Toggle to $ Cost mode -> 7d, 30d, Year, 16-Week, and Peak switch to bordered .cm-cost-pill
+  clickHandler({ target: { closest: (sel) => (sel === '[data-hm-metric]' ? { dataset: { hmMetric: 'cost' } } : null) } });
+  assert.ok(anaNode.innerHTML.includes('cm-cost-pill">7d: $1.25'));
+  assert.ok(anaNode.innerHTML.includes('cm-cost-pill">30d: $42.50'));
+  assert.ok(anaNode.innerHTML.includes('cm-cost-pill">Year: $249.53'));
+  assert.ok(hmTotal.innerHTML.includes('cm-cost-pill') && hmTotal.innerHTML.includes('$18.40'));
+  assert.ok(hmPeak.innerHTML.includes('cm-cost-pill') && hmPeak.innerHTML.includes('$18.40'));
+});

@@ -7,7 +7,7 @@
   <script src="/preload.js"></script>
   <script src="/ui-prefs.js"></script>
   <script src="/prefs.js?v=1"></script>
-  <link rel="stylesheet" href="/styles.css?v=11">
+  <link rel="stylesheet" href="/styles.css?v=12">
 </head>
 <body>
   <div class="shell">
@@ -56,13 +56,13 @@
             <div class="gauge-left">
               <div class="eyebrow">当前上下文占用</div>
               <div class="hero-row">
-                <span id="hero-used" class="hero-num">0</span>
+                <span id="hero-used" class="hero-num cm-tok-pill cm-pill-hero">0</span>
                 <span id="hero-pct" class="pct-badge">0.0%</span>
               </div>
             </div>
             <div class="remain-col">
               <div class="eyebrow">上下文余量</div>
-              <div id="hero-remain" class="remain-num">—</div>
+              <div id="hero-remain" class="remain-num cm-tok-pill cm-pill-sm">—</div>
             </div>
           </div>
 
@@ -72,9 +72,9 @@
           </div>
 
           <div class="legend-row">
-            <span class="legend-item"><i class="dot dot-cache"></i>Cache <strong id="leg-cache">0</strong></span>
-            <span class="legend-item"><i class="dot dot-fresh"></i>新增 <strong id="leg-fresh">0</strong></span>
-            <span class="legend-item"><i class="dot dot-remain"></i>余量 <strong id="leg-remain">0</strong></span>
+            <span class="legend-item"><i class="dot dot-cache"></i>Cache <strong id="leg-cache" class="cm-tok-pill cm-pill-xs">0</strong></span>
+            <span class="legend-item"><i class="dot dot-fresh"></i>新增 <strong id="leg-fresh" class="cm-tok-pill cm-pill-xs">0</strong></span>
+            <span class="legend-item"><i class="dot dot-remain"></i>余量 <strong id="leg-remain" class="cm-tok-pill cm-pill-xs">0</strong></span>
           </div>
 
           <div id="gauge-note" class="gauge-note"></div>
@@ -83,17 +83,17 @@
         <section class="metrics-grid">
           <div class="card metric-card">
             <div class="metric-label">Cache 命中</div>
-            <div id="m-cache" class="metric-val">0</div>
+            <div id="m-cache" class="metric-val cm-tok-pill cm-pill-sm">0</div>
             <div id="m-cache-rate" class="metric-sub">命中率 0%</div>
           </div>
           <div class="card metric-card">
             <div class="metric-label">本步新增输入</div>
-            <div id="m-fresh" class="metric-val">0</div>
+            <div id="m-fresh" class="metric-val cm-tok-pill cm-pill-sm">0</div>
             <div class="metric-sub">未命中 Cache</div>
           </div>
           <div class="card metric-card">
             <div class="metric-label">本步输出</div>
-            <div id="m-output" class="metric-val">0</div>
+            <div id="m-output" class="metric-val cm-tok-pill cm-pill-sm">0</div>
             <div id="m-step" class="metric-sub">Step —</div>
           </div>
         </section>
@@ -124,15 +124,15 @@
           <div class="totals-grid">
             <div class="total-item">
               <span class="total-k">累计 Cache 读取</span>
-              <span id="tot-cache" class="total-v">0</span>
+              <span id="tot-cache" class="total-v cm-tok-pill cm-pill-xs">0</span>
             </div>
             <div class="total-item">
               <span class="total-k">累计新增输入</span>
-              <span id="tot-fresh" class="total-v">0</span>
+              <span id="tot-fresh" class="total-v cm-tok-pill cm-pill-xs">0</span>
             </div>
             <div class="total-item">
               <span class="total-k">累计输出</span>
-              <span id="tot-output" class="total-v">0</span>
+              <span id="tot-output" class="total-v cm-tok-pill cm-pill-xs">0</span>
             </div>
             <div class="total-item">
               <span class="total-k">平均 Cache 命中</span>
@@ -206,11 +206,11 @@
     </main>
   </div>
 
-  <script src="/i18n.js?v=6"></script>
+  <script src="/i18n.js?v=7"></script>
   <script src="/sections.js?v=9"></script>
   <script src="/quotas.js?v=4"></script>
-  <script src="/accounts.js?v=3"></script>
-  <script src="/extras.js?v=8"></script>
-  <script src="/app.js?v=8"></script>
+  <script src="/accounts.js?v=4"></script>
+  <script src="/extras.js?v=9"></script>
+  <script src="/app.js?v=9"></script>
 </body>
 </html>

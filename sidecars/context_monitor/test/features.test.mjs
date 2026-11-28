@@ -1062,8 +1062,9 @@ test('breakdown enriches CODE_ACTION items with bilingual hover explanations and
   assert.ok(generic.detailZh.includes('文件编辑、写入或 Diff'));
 });
 
-test('heatmap analytics switches 7d/30d/Year/16-Week/Peak between M token pills and $ cost pills', async () => {
+test('heatmap analytics switches 7d/30d/Year/16-Week/Peak between K/M/B token pills and $ cost pills', async () => {
   const testDir = dirname(fileURLToPath(import.meta.url));
+  const prefsSrc = readFileSync(join(testDir, '..', 'public', 'prefs.js'), 'utf-8');
   const extrasSrc = readFileSync(join(testDir, '..', 'public', 'extras.js'), 'utf-8');
   const today = new Date().toISOString().slice(0, 10);
 
@@ -1140,6 +1141,7 @@ test('heatmap analytics switches 7d/30d/Year/16-Week/Peak between M token pills 
   };
   ctx.globalThis = ctx;
 
+  vm.runInNewContext(prefsSrc, ctx);
   vm.runInNewContext(extrasSrc, ctx);
   await new Promise((r) => setTimeout(r, 10));
 
@@ -1147,12 +1149,12 @@ test('heatmap analytics switches 7d/30d/Year/16-Week/Peak between M token pills 
   assert.ok(anaNode);
   assert.equal(typeof clickHandler, 'function');
 
-  // Switch source to fetch analytics in Tokens mode
+  // Switch source to fetch analytics in Tokens mode (K < 1M, M 1M-<1B, B >= 1B)
   clickHandler({ target: { closest: (sel) => (sel === '[data-hm-source]' ? { dataset: { hmSource: 'all' } } : null) } });
   await new Promise((r) => setTimeout(r, 20));
-  assert.ok(anaNode.innerHTML.includes('cm-tok-pill">7d: 0.50M'));
+  assert.ok(anaNode.innerHTML.includes('cm-tok-pill">7d: 500.0K'));
   assert.ok(anaNode.innerHTML.includes('cm-tok-pill">30d: 946.82M'));
-  assert.ok(anaNode.innerHTML.includes('cm-tok-pill">Year: 3791.17M'));
+  assert.ok(anaNode.innerHTML.includes('cm-tok-pill">Year: 3.79B'));
   assert.ok(hmTotal.innerHTML.includes('cm-tok-pill') && hmTotal.innerHTML.includes('440.14M'));
   assert.ok(hmPeak.innerHTML.includes('cm-tok-pill') && hmPeak.innerHTML.includes('440.14M'));
 
@@ -1163,4 +1165,149 @@ test('heatmap analytics switches 7d/30d/Year/16-Week/Peak between M token pills 
   assert.ok(anaNode.innerHTML.includes('cm-cost-pill">Year: $249.53'));
   assert.ok(hmTotal.innerHTML.includes('cm-cost-pill') && hmTotal.innerHTML.includes('$18.40'));
   assert.ok(hmPeak.innerHTML.includes('cm-cost-pill') && hmPeak.innerHTML.includes('$18.40'));
+});
+
+test('CM_PREFS.formatTokens handles negative numbers cleanly and applies K/M/B thresholds', () => {
+  const testDir = dirname(fileURLToPath(import.meta.url));
+  const prefsSrc = readFileSync(join(testDir, '..', 'public', 'prefs.js'), 'utf-8');
+  const ctx = { globalThis: {} };
+  ctx.globalThis = ctx;
+  vm.runInNewContext(prefsSrc, ctx);
+
+  const fmt = ctx.CM_PREFS.formatTokens;
+  assert.equal(fmt(0), '0');
+  assert.equal(fmt(-0.2), '0');
+  assert.equal(fmt(-42), '-42');
+  assert.equal(fmt(999), '999');
+  assert.equal(fmt(1_250), '1.25K');
+  assert.equal(fmt(-398_685), '-398.7K');
+  assert.equal(fmt(500_000), '500.0K');
+  assert.equal(fmt(1_000_000), '1.00M');
+  assert.equal(fmt(946_820_000), '946.82M');
+  assert.equal(fmt(1_000_000_000), '1.00B');
+  assert.equal(fmt(3_791_170_000), '3.79B');
+  assert.equal(fmt(-1_500_000_000), '-1.50B');
+});
+
+test('app.js renderTurns classifies negative turnDelta with shrink class and -398.7K formatting', async () => {
+  const testDir = dirname(fileURLToPath(import.meta.url));
+  const prefsSrc = readFileSync(join(testDir, '..', 'public', 'prefs.js'), 'utf-8');
+  const appSrc = readFileSync(join(testDir, '..', 'public', 'app.js'), 'utf-8');
+
+  const els = new Map();
+  const makeEl = (id) => {
+    const node = {
+      id,
+      innerHTML: '',
+      textContent: '',
+      title: '',
+      style: {},
+      dataset: {},
+      classList: { toggle() {}, add() {}, remove() {}, contains: () => false },
+      addEventListener() {},
+      removeEventListener() {},
+      setAttribute() {},
+      querySelectorAll: () => [],
+      querySelector: () => null,
+      appendChild() {},
+      remove() {},
+    };
+    if (id) els.set(id, node);
+    return node;
+  };
+  for (const id of [
+    'view-session', 'waiting', 'dashboard', 'turns-list', 'turns-count',
+    'conv-badge', 'limit-badge', 'hero-used', 'hero-pct', 'hero-remain',
+    'seg-cache', 'seg-fresh', 'leg-cache', 'leg-fresh', 'leg-remain',
+    'post-step-note', 'm-cache', 'm-cache-rate', 'm-fresh', 'm-output',
+    'm-output-step', 'm-ttft', 'm-ttft-avg', 'm-tps', 'm-tps-e2e',
+    'm-dur', 'm-dur-stream', 'tot-calls', 'tot-cache', 'tot-fresh',
+    'tot-output', 'tot-hit', 'chart-range', 'sparkline', 'hm-total',
+    'hm-range', 'hm-days', 'hm-sessions', 'hm-calls', 'hm-peak',
+    'hm-months', 'hm-grid', 'hm-detail', 'tab-session', 'tab-heatmap',
+    'view-heatmap', 'live-pill', 'live-text',
+  ]) {
+    makeEl(id);
+  }
+
+  const contextPayload = {
+    conversationId: '5cd8800c-0000-0000-0000-000000000000',
+    found: true,
+    latest: { stepIndex: 10, cacheReadTokens: 40000, inputTokens: 1500, outputTokens: 500, contextUsed: 41500, cacheHitRate: 0.96, projectedNextMin: 42000 },
+    totals: { calls: 3, cacheReadTokens: 500000, inputTokens: 10000, outputTokens: 2000, avgCacheHitRate: 0.95 },
+    limitTokens: 512000,
+    totalSteps: 10,
+    series: [{ contextUsed: 41500, cacheReadTokens: 40000 }],
+    recentTurns: [
+      {
+        turnIndex: 4,
+        startup: { kind: 'warm', label: '热启动', hitRate: 0.995 },
+        turnDelta: -398_685,
+        firstCall: { cacheReadTokens: 440100, contextUsed: 442400 },
+        endContextUsed: 41500,
+        modelCalls: 14,
+        promptPreview: 'Compacted turn',
+      },
+      {
+        turnIndex: 3,
+        startup: { kind: 'warm', label: '热启动', hitRate: 0.994 },
+        turnDelta: 51_500,
+        firstCall: { cacheReadTokens: 380000, contextUsed: 388700 },
+        endContextUsed: 440200,
+        modelCalls: 5,
+        promptPreview: 'Heavy growth turn',
+      },
+      {
+        turnIndex: 2,
+        startup: { kind: 'warm', label: '热启动', hitRate: 0.98 },
+        turnDelta: 1_250,
+        firstCall: { cacheReadTokens: 300000, contextUsed: 305000 },
+        endContextUsed: 306250,
+        modelCalls: 2,
+        promptPreview: 'Small growth turn',
+      },
+    ],
+    turnCount: 3,
+  };
+
+  const docEl = makeEl('documentElement');
+  const ctx = {
+    globalThis: {},
+    window: null,
+    URLSearchParams,
+    location: { search: '?conversationId=5cd8800c-0000-0000-0000-000000000000' },
+    getComputedStyle: () => ({ color: 'rgb(20, 20, 24)' }),
+    MutationObserver: class { observe() {} },
+    CM_I18N: { getLang: () => 'en', translate: () => {} },
+    CM_SECTIONS: { isEnabled: () => true },
+    sidecar: {
+      conversationId: '5cd8800c-0000-0000-0000-000000000000',
+      fetch: async () => ({ ok: true, status: 200, json: async () => contextPayload }),
+    },
+    document: {
+      documentElement: docEl,
+      getElementById: (id) => els.get(id) || makeEl(id),
+      createElement: () => makeEl(''),
+      querySelectorAll: () => [],
+      querySelector: (sel) => makeEl(sel),
+    },
+    setInterval: () => 1,
+    clearInterval: () => {},
+    setTimeout,
+    clearTimeout,
+  };
+  ctx.globalThis = ctx;
+  ctx.window = ctx;
+
+  vm.runInNewContext(prefsSrc, ctx);
+  vm.runInNewContext(appSrc, ctx);
+  await new Promise((r) => setTimeout(r, 20));
+
+  const turnsHtml = els.get('turns-list').innerHTML;
+  assert.ok(turnsHtml.includes('class="step-delta shrink cm-tok-pill cm-pill-xs"'));
+  assert.ok(turnsHtml.includes('>-398.7K<'));
+  assert.ok(turnsHtml.includes('class="step-delta big cm-tok-pill cm-pill-xs"'));
+  assert.ok(turnsHtml.includes('>+51.5K<'));
+  assert.ok(turnsHtml.includes('class="step-delta cm-tok-pill cm-pill-xs"'));
+  assert.ok(turnsHtml.includes('>+1.25K<'));
 });

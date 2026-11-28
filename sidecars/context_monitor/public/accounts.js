@@ -18,13 +18,7 @@
     }[c]));
   }
 
-  function fmtTok(n) {
-    const v = Number(n) || 0;
-    if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`;
-    if (v >= 10_000) return `${(v / 1_000).toFixed(1)}K`;
-    if (v >= 1_000) return `${(v / 1_000).toFixed(2)}K`;
-    return String(Math.round(v));
-  }
+  const fmtTok = (n) => globalThis.CM_PREFS.formatTokens(n);
 
   function fmtUsd(n) {
     const v = Number(n) || 0;

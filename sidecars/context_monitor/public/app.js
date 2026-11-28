@@ -36,20 +36,7 @@
     attributeFilter: ['style'],
   });
 
-  function fmtTokens(n) {
-    const v = Number(n) || 0;
-    if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`;
-    if (v >= 10_000) return `${(v / 1_000).toFixed(1)}K`;
-    if (v >= 1_000) return `${(v / 1_000).toFixed(2)}K`;
-    return String(Math.round(v));
-  }
-
-  function fmtMillions(n) {
-    const v = Number(n) || 0;
-    if (v <= 0) return '0.00M';
-    if (v >= 1_000) return `${(v / 1_000_000).toFixed(2)}M`;
-    return `${(v / 1_000_000).toFixed(3)}M`;
-  }
+  const fmtTokens = (n) => globalThis.CM_PREFS.formatTokens(n);
 
   function fmtUsd(n) {
     const v = Number(n) || 0;
@@ -151,10 +138,17 @@
       const st = t.startup || { kind: 'pending', label: '等待响应', hitRate: 0 };
       const hitStr = st.kind === 'pending' ? '' : ` · ${fmtPct(st.hitRate)}`;
       const badgeText = `${st.label}${hitStr}`;
+      const deltaCls = t.turnDelta < 0 ? 'shrink' : (t.turnDelta >= 20000 ? 'big' : '');
       const deltaSign = t.turnDelta >= 0 ? '+' : '';
-      const bigDelta = t.turnDelta >= 20000 ? 'big' : '';
+      const deltaStr = `${deltaSign}${fmtTokens(t.turnDelta)}`;
+      const deltaTip = t.turnDelta < 0
+        ? `上下文压缩/截断：本轮净减少 ${fmtTokens(Math.abs(t.turnDelta))}`
+        : (t.turnDelta >= 20000
+          ? `本轮上下文大幅增长 ${deltaStr}（≥ 20K）`
+          : `本轮上下文净变化 ${deltaStr}（< 20K）`);
+      const deltaClasses = ['step-delta', deltaCls, 'cm-tok-pill', 'cm-pill-xs'].filter(Boolean).join(' ');
       const deltaBadge = t.firstCall
-        ? `<span class="step-delta ${bigDelta} cm-tok-pill cm-pill-xs">${deltaSign}${fmtTokens(t.turnDelta)}</span>`
+        ? `<span class="${deltaClasses}" title="${esc(deltaTip)}">${deltaStr}</span>`
         : '';
 
       const speedParts = [];
@@ -296,13 +290,13 @@
   function renderHeatmap(hm) {
     state.heatmapData = hm;
     const totals = hm.totals || {};
-    $('hm-total').innerHTML = `<span class="cm-tok-pill cm-pill-sm">${fmtMillions(totals.totalTokens)}</span>`;
+    $('hm-total').innerHTML = `<span class="cm-tok-pill cm-pill-sm">${fmtTokens(totals.totalTokens)}</span>`;
     $('hm-total').title = `${fmtExact(totals.totalTokens)} tokens`;
     $('hm-range').textContent = `${hm.rangeStart?.slice(5) || ''} ~ ${hm.rangeEnd?.slice(5) || ''}`;
     $('hm-days').textContent = `${totals.activeDays ?? 0} 天`;
     $('hm-sessions').textContent = `${totals.sessions ?? 0} 个会话`;
     $('hm-calls').textContent = fmtExact(totals.calls ?? 0);
-    $('hm-peak').innerHTML = `<span>峰值</span> <span class="cm-tok-pill cm-pill-xs">${fmtMillions(hm.maxDayTokens)}</span>`;
+    $('hm-peak').innerHTML = `<span>峰值</span> <span class="cm-tok-pill cm-pill-xs">${fmtTokens(hm.maxDayTokens)}</span>`;
 
     const days = hm.days || [];
     const monthsEl = $('hm-months');
@@ -361,8 +355,8 @@
       : '';
 
     const baseHtml =
-      `<strong>${esc(day.date)}</strong><span> · 共 </span><span class="cm-tok-pill cm-pill-xs">${fmtMillions(day.totalTokens)}</span>${costHtml}<span> (${day.calls} 次调用 · ${day.sessions} 会话)</span><br>` +
-      `<span>Cache </span><span class="cm-tok-pill cm-pill-xs">${fmtMillions(day.cacheReadTokens)}</span><span> · 新增 </span><span class="cm-tok-pill cm-pill-xs">${fmtMillions(day.inputTokens)}</span><span> · 输出 </span><span class="cm-tok-pill cm-pill-xs">${fmtMillions(day.outputTokens)}</span>`;
+      `<strong>${esc(day.date)}</strong><span> · 共 </span><span class="cm-tok-pill cm-pill-xs">${fmtTokens(day.totalTokens)}</span>${costHtml}<span> (${day.calls} 次调用 · ${day.sessions} 会话)</span><br>` +
+      `<span>Cache </span><span class="cm-tok-pill cm-pill-xs">${fmtTokens(day.cacheReadTokens)}</span><span> · 新增 </span><span class="cm-tok-pill cm-pill-xs">${fmtTokens(day.inputTokens)}</span><span> · 输出 </span><span class="cm-tok-pill cm-pill-xs">${fmtTokens(day.outputTokens)}</span>`;
 
     let models = state.dayModelsCache.get(day.date);
     if (!models) {
@@ -378,7 +372,7 @@
     }
 
     const modelText = models.length > 0
-      ? models.map((m) => `<span>${esc(m.model)} (</span><span>${m.calls}次</span><span> · </span><span class="cm-tok-pill cm-pill-xs">${fmtMillions(m.totalTokens)}</span><span>)</span>`).join(' · ')
+      ? models.map((m) => `<span>${esc(m.model)} (</span><span>${m.calls}次</span><span> · </span><span class="cm-tok-pill cm-pill-xs">${fmtTokens(m.totalTokens)}</span><span>)</span>`).join(' · ')
       : '<span>暂无模型 ID 记录</span>';
     el.innerHTML = `${baseHtml}<br><span>模型：</span>${modelText}`;
   }

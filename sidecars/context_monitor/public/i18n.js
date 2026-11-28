@@ -84,6 +84,9 @@
   const REGEX_EN = [
     [/^最近 (\d+) 次调用 · 峰值 (.+?) \/ (.+)$/, 'Last $1 calls · Peak $2 / $3'],
     [/^共 (\d+) 轮 · 倒序$/, '$1 turns · Newest first'],
+    [/^上下文压缩\/截断：本轮净减少 (.+)$/, 'Context compacted/truncated: -$1 net change this turn'],
+    [/^本轮上下文大幅增长 (.+)（≥ 20K）$/, 'Large context growth: $1 this turn (≥ 20K)'],
+    [/^本轮上下文净变化 (.+)（< 20K）$/, 'Net context change: $1 this turn (< 20K)'],
     [/^(\d+) 次调用$/, '$1 calls'],
     [/^首步 Cache (.+?) \/ (.+)$/, '1st step Cache $1 / $2'],
     [/^结束 (.+)$/, 'End $1'],

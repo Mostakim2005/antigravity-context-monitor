@@ -1809,6 +1809,9 @@ html, body {
   --cm-cost-fg: #92400e;
   --cm-cost-bg: color-mix(in srgb, #d97706 13%, var(--cm-card));
   --cm-cost-bd: color-mix(in srgb, #d97706 50%, var(--cm-border));
+  --cm-shrink-fg: #115e3b;
+  --cm-shrink-bg: color-mix(in srgb, #16794c 13%, var(--cm-card));
+  --cm-shrink-bd: color-mix(in srgb, #16794c 48%, var(--cm-border));
 }
 
 :root[data-theme="dark"] {
@@ -1818,6 +1821,9 @@ html, body {
   --cm-cost-fg: #fbbf24;
   --cm-cost-bg: color-mix(in srgb, #f59e0b 14%, var(--cm-card));
   --cm-cost-bd: color-mix(in srgb, #f59e0b 52%, var(--cm-border));
+  --cm-shrink-fg: #34d399;
+  --cm-shrink-bg: color-mix(in srgb, #10b981 14%, var(--cm-card));
+  --cm-shrink-bd: color-mix(in srgb, #34d399 52%, var(--cm-border));
 }
 
 .cm-tok-pill,
@@ -1870,6 +1876,25 @@ html, body {
   color: var(--cm-cost-fg);
   background: var(--cm-cost-bg);
   border: 1px solid var(--cm-cost-bd);
+}
+
+.cm-tok-pill.step-delta {
+  color: var(--cm-fg-muted);
+  background: color-mix(in srgb, var(--cm-fg) 8%, var(--cm-card));
+  border: 1px solid color-mix(in srgb, var(--cm-fg) 26%, var(--cm-border));
+  cursor: help;
+}
+
+.cm-tok-pill.step-delta.big {
+  color: var(--cm-cost-fg);
+  background: var(--cm-cost-bg);
+  border: 1px solid var(--cm-cost-bd);
+}
+
+.cm-tok-pill.step-delta.shrink {
+  color: var(--cm-shrink-fg);
+  background: var(--cm-shrink-bg);
+  border: 1px solid var(--cm-shrink-bd);
 }
 
 .sc-tok-inline {

@@ -124,6 +124,21 @@
     }
   }
 
+  /**
+   * Format signed token counts cleanly: raw (<1K), K (<1M), M (1M-<1B), B (>=1B).
+   */
+  function formatTokens(n) {
+    const num = Number(n) || 0;
+    if (Math.abs(num) < 1 && Math.round(num) === 0) return '0';
+    const sign = num < 0 ? '-' : '';
+    const v = Math.abs(num);
+    if (v >= 1_000_000_000) return `${sign}${(v / 1_000_000_000).toFixed(2)}B`;
+    if (v >= 1_000_000) return `${sign}${(v / 1_000_000).toFixed(2)}M`;
+    if (v >= 10_000) return `${sign}${(v / 1_000).toFixed(1)}K`;
+    if (v >= 1_000) return `${sign}${(v / 1_000).toFixed(2)}K`;
+    return `${sign}${Math.round(v)}`;
+  }
+
   function writeLocal(key, value) {
     try {
       globalThis.localStorage?.setItem(key, value);
@@ -139,5 +154,6 @@
     fetchServerPrefs,
     readLocal,
     writeLocal,
+    formatTokens,
   };
 })();

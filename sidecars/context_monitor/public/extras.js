@@ -105,20 +105,7 @@
     }[c]));
   }
 
-  function fmtTok(n) {
-    const v = Number(n) || 0;
-    if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`;
-    if (v >= 10_000) return `${(v / 1_000).toFixed(1)}K`;
-    if (v >= 1_000) return `${(v / 1_000).toFixed(2)}K`;
-    return String(Math.round(v));
-  }
-
-  function fmtMillions(n) {
-    const v = Number(n) || 0;
-    if (v <= 0) return '0.00M';
-    if (v >= 1_000) return `${(v / 1_000_000).toFixed(2)}M`;
-    return `${(v / 1_000_000).toFixed(3)}M`;
-  }
+  const fmtTok = (n) => globalThis.CM_PREFS.formatTokens(n);
 
   function fmtUsd(n) {
     const v = Number(n) || 0;
@@ -1162,7 +1149,7 @@
     const isCost = runtime.hmMetric === 'cost';
 
     const pillCls = isCost ? 'cm-cost-pill' : 'cm-tok-pill';
-    const fmtMetric = (bucket) => (isCost ? fmtUsd(bucket?.cost || 0) : fmtMillions(bucket?.tokens || 0));
+    const fmtMetric = (bucket) => (isCost ? fmtUsd(bucket?.cost || 0) : fmtTok(bucket?.tokens || 0));
 
     box.innerHTML = `
       <div class="hm-ana-top">
@@ -1220,13 +1207,13 @@
     if (hmTotalEl) {
       hmTotalEl.innerHTML = isCost
         ? `<span class="cm-cost-pill cm-pill-sm">${fmtUsd(rangeCost)}</span>`
-        : `<span class="cm-tok-pill cm-pill-sm">${fmtMillions(rangeTokens)}</span>`;
+        : `<span class="cm-tok-pill cm-pill-sm">${fmtTok(rangeTokens)}</span>`;
     }
     const hmPeakEl = document.getElementById('hm-peak');
     if (hmPeakEl) {
       hmPeakEl.innerHTML = isCost
         ? `<span>${lang === 'en' ? 'Peak' : '峰值'}</span> <span class="cm-cost-pill cm-pill-xs">${fmtUsd(peakCost)}</span>`
-        : `<span>${lang === 'en' ? 'Peak' : '峰值'}</span> <span class="cm-tok-pill cm-pill-xs">${fmtMillions(peakTokens)}</span>`;
+        : `<span>${lang === 'en' ? 'Peak' : '峰值'}</span> <span class="cm-tok-pill cm-pill-xs">${fmtTok(peakTokens)}</span>`;
     }
 
     for (const c of cells) {
@@ -1244,7 +1231,7 @@
       }
       c.classList.add(`lv${lv}`);
       if (rec && rec.calls > 0) {
-        c.title = `${dk}: ${fmtMillions(rec.totalTokens)} · ${fmtUsd(rec.totalCost)} (${rec.calls} calls)`;
+        c.title = `${dk}: ${fmtTok(rec.totalTokens)} · ${fmtUsd(rec.totalCost)} (${rec.calls} calls)`;
       }
     }
   }

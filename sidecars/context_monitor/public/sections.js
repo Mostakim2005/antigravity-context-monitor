@@ -4,6 +4,7 @@
   const SECTION_DEFS = [
     { key: 'switcher', en: 'Chat Switcher / Lock', zh: '会话切换 / 锁定主控', defaultOn: true },
     { key: 'quotas', en: 'Model Quotas (5h & 7d)', zh: '模型额度（5h / 周额度）', defaultOn: true },
+    { key: 'claudeQuotas', en: 'Claude / GPT Quotas', zh: 'Claude / GPT 额度', defaultOn: true },
     { key: 'gauge', en: 'Context Used', zh: '当前上下文占用', defaultOn: true },
     { key: 'breakdown', en: 'Context Breakdown', zh: '上下文构成', defaultOn: true },
     { key: 'tokenMetrics', en: 'Cache / Input / Output', zh: '缓存 / 输入 / 输出', defaultOn: true },

@@ -967,3 +967,68 @@ test('prefs.js + sections.js restore server sections across port changes, migrat
   assert.equal(hD.ctx.CM_SECTIONS.isEnabled('quotas'), false);
   assert.equal(hD.byId.get('switcher-bar').classList.contains('cm-sec-hidden'), true);
 });
+
+test('quotas.js independently hides Claude / GPT pool when claudeQuotas section is disabled', async () => {
+  const testDir = dirname(fileURLToPath(import.meta.url));
+  const quotasSrc = readFileSync(join(testDir, '..', 'public', 'quotas.js'), 'utf-8');
+
+  let claudeEnabled = false;
+  const listeners = [];
+  const quotasCard = { id: 'quotas-card', className: '', innerHTML: '', addEventListener() {} };
+  const viewSession = {
+    appendChild() {},
+    insertBefore() {},
+  };
+  const ctx = {
+    globalThis: {},
+    URLSearchParams,
+    CM_I18N: { getLang: () => 'en', onChange: () => {} },
+    CM_SECTIONS: {
+      isEnabled: (k) => (k === 'claudeQuotas' ? claudeEnabled : true),
+      applyVisibility: () => {},
+      onChange: (fn) => listeners.push(fn),
+    },
+    sidecar: {
+      fetch: async () => ({
+        ok: true,
+        json: async () => ({
+          available: true,
+          pools: [
+            { pool: 'gemini', label: 'Gemini', fiveHour: { remainingPct: 71 }, weekly: { remainingPct: 67 } },
+            { pool: 'premium', label: 'Claude / GPT', fiveHour: { remainingPct: 100 }, weekly: { remainingPct: 96 } },
+          ],
+          aiCredits: [],
+        }),
+      }),
+    },
+    document: {
+      readyState: 'complete',
+      getElementById: (id) => {
+        if (id === 'view-session') return viewSession;
+        if (id === 'quotas-card') return quotasCard._mounted ? quotasCard : null;
+        return null;
+      },
+      createElement: () => {
+        quotasCard._mounted = true;
+        return quotasCard;
+      },
+      addEventListener() {},
+    },
+    setInterval: () => 1,
+    clearInterval: () => {},
+  };
+  ctx.globalThis = ctx;
+
+  vm.runInNewContext(quotasSrc, ctx);
+  await new Promise((r) => setTimeout(r, 15));
+
+  // Gemini stays visible, Claude / GPT is hidden
+  assert.ok(quotasCard.innerHTML.includes('Gemini'));
+  assert.equal(quotasCard.innerHTML.includes('Claude / GPT'), false);
+
+  // Re-enabling claudeQuotas triggers immediate re-render showing Claude / GPT
+  claudeEnabled = true;
+  for (const fn of listeners) fn({ quotas: true, claudeQuotas: true });
+  assert.ok(quotasCard.innerHTML.includes('Gemini'));
+  assert.ok(quotasCard.innerHTML.includes('Claude / GPT'));
+});

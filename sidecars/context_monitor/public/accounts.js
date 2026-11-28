@@ -81,7 +81,8 @@
 
     const firstName = String(active.name || active.email).split(/[@\s]+/)[0].slice(0, 12);
     const tokLabel = fmtTok(active.usage?.totalTokens || 0);
-    pill.innerHTML = `<span class="acct-pill-dot is-live"></span><span>${esc(firstName)}</span><span class="acct-pill-meta">${count > 1 ? `${count} · ` : ''}${tokLabel}</span>`;
+    const cntHtml = count > 1 ? `<span class="acct-pill-cnt">${count}</span>` : '';
+    pill.innerHTML = `<span class="acct-pill-dot is-live"></span><span class="acct-pill-name">${esc(firstName)}</span>${cntHtml}<span class="acct-pill-tok">${tokLabel}</span>`;
     pill.title = `${active.email} · ${tokLabel} tokens`;
   }
 

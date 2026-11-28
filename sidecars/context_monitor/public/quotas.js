@@ -93,6 +93,13 @@
     return `<div class="q-credits-row"><span class="q-credits-label">${lang === 'en' ? 'AI Credits' : 'AI 积分'}</span><div class="q-credits-pills">${pills}</div></div>`;
   }
 
+  function isPoolEnabled(pool) {
+    if (pool?.pool === 'premium' || /\b(?:claude|gpt)\b/i.test(pool?.label || '')) {
+      return !globalThis.CM_SECTIONS || globalThis.CM_SECTIONS.isEnabled('claudeQuotas');
+    }
+    return true;
+  }
+
   function render() {
     const card = document.getElementById('quotas-card');
     if (!card) return;
@@ -106,9 +113,10 @@
     } else if (!lastData.available || (!lastData.pools?.length && !lastData.aiCredits?.length)) {
       bodyHtml = `<div class="q-note">${lang === 'en' ? 'Quota telemetry unavailable from LanguageServer.' : '暂未获取到 LanguageServer 额度信息。'}</div>`;
     } else {
-      const poolsHtml = (lastData.pools || []).length > 0
-        ? `<div class="q-pools">${lastData.pools.map((p) => `
-          <div class="q-pool">
+      const visiblePools = (lastData.pools || []).filter(isPoolEnabled);
+      const poolsHtml = visiblePools.length > 0
+        ? `<div class="q-pools">${visiblePools.map((p) => `
+          <div class="q-pool" data-quota-pool="${esc(p.pool || '')}">
             <div class="q-pool-head">
               <span class="q-pool-name">${esc(p.label)}</span>
               ${renderRunwayPill(p.runway, lang)}
@@ -120,6 +128,10 @@
           </div>
         `).join('')}</div>`
         : '';
+      const creditsHtml = renderCreditsRow(lastData.aiCredits, lang);
+      const allHiddenNote = !poolsHtml && !creditsHtml
+        ? `<div class="q-note">${lang === 'en' ? 'All quota pools are hidden in Sections.' : '额度分组已在栏目设置中隐藏。'}</div>`
+        : '';
       const byokBanner = lastData.activeModel?.isCustomModel
         ? `<div class="q-byok-note">${
             lang === 'en'
@@ -127,7 +139,7 @@
               : `当前模型 (${esc(lastData.activeModel.label || lastData.activeModel.modelId)}) 为 BYOK / 自定义模型，已隔离 Google 额度消耗统计。`
           }</div>`
         : '';
-      bodyHtml = byokBanner + poolsHtml + renderCreditsRow(lastData.aiCredits, lang);
+      bodyHtml = byokBanner + poolsHtml + creditsHtml + allHiddenNote;
     }
 
     card.innerHTML = `
@@ -182,6 +194,7 @@
     globalThis.CM_I18N?.onChange?.(() => render());
     globalThis.CM_SECTIONS?.onChange?.((p) => {
       if (p.quotas && !lastData) fetchQuotas(false);
+      else render();
     });
 
     fetchQuotas(false);

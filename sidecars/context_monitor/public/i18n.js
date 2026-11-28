@@ -26,7 +26,7 @@
     '首字延迟 TTFT': 'TTFT',
     '均值 —': 'Avg —',
     '解码速度 TPS': 'Decode Speed',
-    '含首字 —': 'End-to-end —',
+    '含首字 —': 'E2E —',
     '本步耗时': 'Step Duration',
     '流式 —': 'Stream —',
     '本会话累计': 'Session Totals',
@@ -86,8 +86,8 @@
     [/^按 (.+) 上限计算$/, 'Based on $1 limit'],
     [/^步后统计（含输出后下轮底数 ≥ ([^）]+)）( · 接近窗口上限，建议适时 \/compact)?$/, (_, minTok, warn) => `Post-step (next turn min ≥ ${minTok})${warn ? ' · Near limit — consider /compact' : ''}`],
     [/^命中率 (.+)$/, 'Hit rate $1'],
-    [/^会话均值 (.+)$/, 'Session avg $1'],
-    [/^含首字 (.+)$/, 'With TTFT $1'],
+    [/^会话均值 (.+)$/, 'Avg $1'],
+    [/^含首字 (.+)$/, 'E2E $1'],
     [/^均值 (.+)$/, 'Avg $1'],
     [/^流式 (.+)$/, 'Stream $1'],
     [/^(\d+) 次模型调用 · (\d+) 步$/, '$1 calls · $2 steps'],
@@ -277,12 +277,10 @@
   }
 
   function mountToggle() {
+    const headerActions = document.querySelector('.header-actions');
     const headerTop = document.querySelector('.header-top');
-    const convBadge = document.getElementById('conv-badge');
-    if (!headerTop || document.getElementById('cm-lang-toggle')) return;
-
-    const right = document.createElement('div');
-    right.className = 'header-right';
+    const host = headerActions || headerTop;
+    if (!host || document.getElementById('cm-lang-toggle')) return;
 
     const toggle = document.createElement('div');
     toggle.id = 'cm-lang-toggle';
@@ -309,13 +307,7 @@
       setLang(btn.dataset.lang);
     });
 
-    if (convBadge && convBadge.parentElement === headerTop) {
-      headerTop.insertBefore(right, convBadge);
-      right.append(toggle, convBadge);
-    } else {
-      right.append(toggle);
-      headerTop.append(right);
-    }
+    host.append(toggle);
     updateToggleUi();
   }
 

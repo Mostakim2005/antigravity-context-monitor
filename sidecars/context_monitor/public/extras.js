@@ -417,16 +417,14 @@
       : '即使切换到子代理，也锁定跟踪主对话';
 
     bar.innerHTML = `
-      <div class="section-head switcher-head">
-        <span class="section-title">${lang === 'en' ? 'Chat Switcher / Lock' : '会话切换 / 锁定主控'}</span>
-        <button type="button" id="cm-lock-main-btn" class="preset-btn cm-lock-btn${switchState.lockMain ? ' active' : ''}" title="${esc(lockTitle)}" aria-pressed="${switchState.lockMain}">
-          ${lockLabel}
-        </button>
-      </div>
-      <div class="switcher-row">
+      <div class="switcher-inline">
+        <span class="section-title switcher-label">${lang === 'en' ? 'Chat Switcher / Lock' : '会话切换 / 锁定主控'}</span>
         <select id="cm-conv-select" class="cm-select" aria-label="${lang === 'en' ? 'Select conversation' : '选择会话'}">
           ${options}
         </select>
+        <button type="button" id="cm-lock-main-btn" class="preset-btn cm-lock-btn${switchState.lockMain ? ' active' : ''}" title="${esc(lockTitle)}" aria-pressed="${switchState.lockMain}">
+          ${lockLabel}
+        </button>
       </div>
       ${
         lockedSub

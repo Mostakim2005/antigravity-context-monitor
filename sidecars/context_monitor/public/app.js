@@ -179,11 +179,7 @@
 
     const meta = data.meta || {};
     const repoLine = $('repo-line');
-    const activeModels = data.speedStats?.models?.length
-      ? data.speedStats.models.join(', ')
-      : (data.latest?.speed?.model || '');
     const parts = [
-      activeModels,
       meta.title,
       meta.repoName,
       meta.branch ? `@${meta.branch}` : '',
